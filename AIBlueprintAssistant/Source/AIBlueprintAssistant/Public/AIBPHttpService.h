@@ -49,6 +49,30 @@ public:
 	/** Returns the built-in default system prompt (with few-shot T3D examples). */
 	static FString GetDefaultSystemPrompt();
 
+	/**
+	 * Returns the system prompt used for Blueprint analysis requests.
+	 * Instructs the AI to output a bilingual (Chinese + English) structured
+	 * analysis with a summary and a per-module breakdown.
+	 */
+	static FString GetAnalysisSystemPrompt();
+
+	/**
+	 * Sends an asynchronous analysis request that asks the AI to summarise and
+	 * break down the currently open Blueprint into logical modules.
+	 *
+	 * @param ContextJson  Blueprint context produced by UAIBPContextUtils::GetActiveBlueprintData().
+	 * @param GraphJson    Graph node data produced by UAIBPContextUtils::GetActiveBlueprintGraphData().
+	 * @param ApiKey       Bearer token. Reads from UAIBPSettings when empty.
+	 * @param ApiUrl       Full endpoint URL. Reads from UAIBPSettings when empty.
+	 * @param OnComplete   Callback: (bSuccess, AnalysisTextOrErrorMessage).
+	 */
+	static void SendAnalysisRequest(
+		TSharedPtr<FJsonObject> ContextJson,
+		TSharedPtr<FJsonObject> GraphJson,
+		const FString& ApiKey,
+		const FString& ApiUrl,
+		TFunction<void(bool bSuccess, const FString& Result)> OnComplete);
+
 private:
 	/**
 	 * Builds the JSON request body following the OpenAI Chat Completions spec.

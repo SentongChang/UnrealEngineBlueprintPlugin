@@ -36,6 +36,9 @@ private:
 	/** Fired when the user clicks "Generate Blueprint Nodes" */
 	FReply OnGenerateClicked();
 
+	/** Fired when the user clicks "Analyze Blueprint" */
+	FReply OnAnalyzeClicked();
+
 	/** Fired when the user clicks "New Conversation" */
 	FReply OnNewConversationClicked();
 
@@ -84,6 +87,9 @@ private:
 
 	/** The generate button — disabled while a request is in flight */
 	TSharedPtr<SButton> GenerateButton;
+
+	/** The analyze button — disabled while any request is in flight */
+	TSharedPtr<SButton> AnalyzeButton;
 
 	/** Short status label shown above the log */
 	TSharedPtr<STextBlock> StatusText;

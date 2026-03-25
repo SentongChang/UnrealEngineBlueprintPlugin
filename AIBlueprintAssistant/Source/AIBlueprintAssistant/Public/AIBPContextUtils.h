@@ -36,6 +36,24 @@ public:
 	 */
 	static TSharedPtr<FJsonObject> GetActiveBlueprintData();
 
+	/**
+	 * Serialises every node in every graph of the currently active Blueprint.
+	 * Covers the EventGraph (UbergraphPages) and all custom function graphs.
+	 * Returns nullptr when no Blueprint is open.
+	 *
+	 * JSON shape:
+	 * {
+	 *   "blueprintName": "BP_Player",
+	 *   "graphs": [
+	 *     { "name": "EventGraph",
+	 *       "nodes": [ {"title": "Event BeginPlay", "class": "K2Node_Event"}, ... ] },
+	 *     { "name": "Sprint",
+	 *       "nodes": [ ... ] }
+	 *   ]
+	 * }
+	 */
+	static TSharedPtr<FJsonObject> GetActiveBlueprintGraphData();
+
 private:
 	/** Builds a complete JSON snapshot from a UBlueprint asset. */
 	static TSharedPtr<FJsonObject> BuildJsonFromBlueprint(class UBlueprint* Blueprint);

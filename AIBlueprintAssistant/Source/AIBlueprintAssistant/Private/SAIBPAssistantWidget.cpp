@@ -6,6 +6,7 @@
 #include "AIBPNodeFactory.h"
 #include "AIBPSettings.h"
 #include "SAIBPPreviewDialog.h"
+#include "SAIBPAnalysisDialog.h"
 
 #include "Async/Async.h"
 #include "Framework/Application/SlateApplication.h"
@@ -105,12 +106,25 @@ void SAIBPAssistantWidget::Construct(const FArguments& InArgs)
 			// ---- Generate Button ----
 			+ SVerticalBox::Slot()
 			.AutoHeight()
-			.Padding(0.f, 8.f, 0.f, 4.f)
+			.Padding(0.f, 8.f, 0.f, 2.f)
 			[
 				SAssignNew(GenerateButton, SButton)
 				.Text(LOCTEXT("GenerateButtonLabel", "Generate Blueprint Nodes"))
 				.HAlign(HAlign_Center)
 				.OnClicked(this, &SAIBPAssistantWidget::OnGenerateClicked)
+			]
+
+			// ---- Analyze Button ----
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.Padding(0.f, 2.f, 0.f, 4.f)
+			[
+				SAssignNew(AnalyzeButton, SButton)
+				.Text(LOCTEXT("AnalyzeButtonLabel", "Analyze Blueprint"))
+				.HAlign(HAlign_Center)
+				.ToolTipText(LOCTEXT("AnalyzeButtonTooltip",
+					"Ask AI to summarise what this Blueprint does and explain it module by module."))
+				.OnClicked(this, &SAIBPAssistantWidget::OnAnalyzeClicked)
 			]
 
 			// ---- Status Text ----
@@ -381,6 +395,96 @@ void SAIBPAssistantWidget::HandleGenerationResponse(
 	);
 }
 
+FReply SAIBPAssistantWidget::OnAnalyzeClicked()
+{
+	if (bIsGenerating)
+	{
+		return FReply::Handled();
+	}
+
+	const UAIBPSettings* Settings = GetDefault<UAIBPSettings>();
+	const FString ApiUrl = Settings ? Settings->ApiUrl : FString();
+	const FString ApiKey = Settings ? Settings->ApiKey : FString();
+
+	if (ApiKey.IsEmpty())
+	{
+		AppendLog(TEXT("[Warning] No API key configured — request may be rejected. "
+					   "Set it in Project Settings > Plugins > AI Blueprint Assistant."));
+	}
+
+	SetGenerating(true);
+	AppendLog(TEXT("[Analyze] Fetching Blueprint context and graph data..."));
+
+	TSharedPtr<FJsonObject> ContextJson = UAIBPContextUtils::GetActiveBlueprintData();
+	TSharedPtr<FJsonObject> GraphJson   = UAIBPContextUtils::GetActiveBlueprintGraphData();
+
+	if (!ContextJson.IsValid() && !GraphJson.IsValid())
+	{
+		AppendLog(TEXT("[Warning] No active Blueprint editor found. Please open a Blueprint first."));
+		SetGenerating(false);
+		return FReply::Handled();
+	}
+
+	if (!ContextJson.IsValid())
+	{
+		ContextJson = MakeShared<FJsonObject>();
+	}
+	if (!GraphJson.IsValid())
+	{
+		GraphJson = MakeShared<FJsonObject>();
+	}
+
+	AppendLog(TEXT("[Analyze] Sending to AI..."));
+
+	TWeakPtr<SAIBPAssistantWidget> WeakThis = SharedThis(this);
+
+	UAIBPHttpService::SendAnalysisRequest(
+		ContextJson,
+		GraphJson,
+		ApiKey,
+		ApiUrl,
+		[WeakThis](bool bSuccess, const FString& Result)
+		{
+			AsyncTask(ENamedThreads::GameThread, [WeakThis, bSuccess, Result]()
+			{
+				TSharedPtr<SAIBPAssistantWidget> PinnedThis = WeakThis.Pin();
+				if (!PinnedThis.IsValid()) { return; }
+
+				if (!bSuccess)
+				{
+					PinnedThis->AppendLog(FString::Printf(
+						TEXT("[Error] Analysis request failed: %s"), *Result));
+					PinnedThis->SetGenerating(false);
+					return;
+				}
+
+				PinnedThis->AppendLog(TEXT("[Analyze] Analysis complete. Opening report window..."));
+
+				// Open the analysis result in a modal dialog
+				TSharedRef<SWindow> AnalysisWindow = SNew(SWindow)
+					.Title(LOCTEXT("AnalysisWindowTitle",
+						"AI Blueprint Assistant — Blueprint Analysis Report"))
+					.ClientSize(FVector2D(720.f, 600.f))
+					.SupportsMinimize(false)
+					.SupportsMaximize(true)
+					.SizingRule(ESizingRule::UserSized);
+
+				TSharedRef<SAIBPAnalysisDialog> DialogContent =
+					SNew(SAIBPAnalysisDialog)
+					.AnalysisText(Result)
+					.ParentWindow(AnalysisWindow);
+
+				AnalysisWindow->SetContent(DialogContent);
+				FSlateApplication::Get().AddModalWindow(AnalysisWindow, PinnedThis);
+
+				PinnedThis->SetGenerating(false);
+			});
+		}
+	);
+
+	return FReply::Handled();
+}
+
 FReply SAIBPAssistantWidget::OnNewConversationClicked()
 {
 	const int32 PreviousTurns = ConversationHistory.Num() / 2;
@@ -438,6 +542,11 @@ void SAIBPAssistantWidget::SetGenerating(bool bNewGenerating)
 	if (GenerateButton.IsValid())
 	{
 		GenerateButton->SetEnabled(!bIsGenerating);
+	}
+
+	if (AnalyzeButton.IsValid())
+	{
+		AnalyzeButton->SetEnabled(!bIsGenerating);
 	}
 
 	if (StatusText.IsValid())

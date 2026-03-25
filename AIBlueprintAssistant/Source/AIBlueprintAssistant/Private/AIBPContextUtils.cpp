@@ -61,6 +61,84 @@ TSharedPtr<FJsonObject> UAIBPContextUtils::GetActiveBlueprintData()
 	return BuildJsonFromBlueprint(ActiveBlueprint);
 }
 
+TSharedPtr<FJsonObject> UAIBPContextUtils::GetActiveBlueprintGraphData()
+{
+	if (!GEditor)
+	{
+		return nullptr;
+	}
+
+	UAssetEditorSubsystem* AssetEditorSubsystem =
+		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+	if (!AssetEditorSubsystem)
+	{
+		return nullptr;
+	}
+
+	UBlueprint* ActiveBlueprint = nullptr;
+	for (UObject* Asset : AssetEditorSubsystem->GetAllEditedAssets())
+	{
+		if (UBlueprint* BP = Cast<UBlueprint>(Asset))
+		{
+			ActiveBlueprint = BP;
+			break;
+		}
+	}
+
+	if (!ActiveBlueprint)
+	{
+		return nullptr;
+	}
+
+	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
+	Root->SetStringField(TEXT("blueprintName"), ActiveBlueprint->GetName());
+
+	TArray<TSharedPtr<FJsonValue>> GraphsArray;
+
+	// Helper lambda: serialise one graph page into a JSON object
+	auto SerialiseGraph = [](UEdGraph* Graph) -> TSharedPtr<FJsonObject>
+	{
+		TSharedPtr<FJsonObject> GraphJson = MakeShared<FJsonObject>();
+		GraphJson->SetStringField(TEXT("name"), Graph->GetName());
+
+		TArray<TSharedPtr<FJsonValue>> NodesArray;
+		for (UEdGraphNode* Node : Graph->Nodes)
+		{
+			if (!Node) { continue; }
+
+			TSharedPtr<FJsonObject> NodeJson = MakeShared<FJsonObject>();
+			NodeJson->SetStringField(TEXT("title"),
+				Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString());
+			NodeJson->SetStringField(TEXT("class"),
+				Node->GetClass()->GetName());
+			NodesArray.Add(MakeShared<FJsonValueObject>(NodeJson));
+		}
+		GraphJson->SetArrayField(TEXT("nodes"), NodesArray);
+		return GraphJson;
+	};
+
+	// Event graphs (UbergraphPages)
+	for (UEdGraph* Graph : ActiveBlueprint->UbergraphPages)
+	{
+		if (Graph)
+		{
+			GraphsArray.Add(MakeShared<FJsonValueObject>(SerialiseGraph(Graph)));
+		}
+	}
+
+	// Custom function graphs
+	for (UEdGraph* Graph : ActiveBlueprint->FunctionGraphs)
+	{
+		if (Graph)
+		{
+			GraphsArray.Add(MakeShared<FJsonValueObject>(SerialiseGraph(Graph)));
+		}
+	}
+
+	Root->SetArrayField(TEXT("graphs"), GraphsArray);
+	return Root;
+}
+
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------

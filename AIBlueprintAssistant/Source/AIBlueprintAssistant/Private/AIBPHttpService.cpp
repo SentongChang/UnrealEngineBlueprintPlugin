@@ -107,8 +107,171 @@ FString UAIBPHttpService::GetDefaultSystemPrompt()
 }
 
 // ---------------------------------------------------------------------------
+// Analysis System Prompt
+// ---------------------------------------------------------------------------
+
+FString UAIBPHttpService::GetAnalysisSystemPrompt()
+{
+	return
+		TEXT("You are an expert Unreal Engine Blueprint analyst.\n")
+		TEXT("The user will provide:\n")
+		TEXT("  1. A Blueprint context JSON (baseClass, variables, components, functions, interfaces)\n")
+		TEXT("  2. A graph data JSON listing every node in every graph of the Blueprint\n")
+		TEXT("\n")
+		TEXT("Your task: analyse the Blueprint and produce a structured bilingual report.\n")
+		TEXT("\n")
+		TEXT("Output format (follow EXACTLY, no extra text outside this structure):\n")
+		TEXT("\n")
+		TEXT("## 总结\n")
+		TEXT("[2-3 sentences in Chinese describing the overall purpose of this Blueprint]\n")
+		TEXT("\n")
+		TEXT("## Summary\n")
+		TEXT("[2-3 sentences in English describing the overall purpose of this Blueprint]\n")
+		TEXT("\n")
+		TEXT("## 模块分析\n")
+		TEXT("\n")
+		TEXT("### [模块名 — use a descriptive Chinese name, e.g. 初始化 / 战斗逻辑 / UI 更新]\n")
+		TEXT("**说明：** [Chinese explanation of what this group of nodes collectively achieves]\n")
+		TEXT("**Description:** [English explanation]\n")
+		TEXT("**涉及节点：** [comma-separated key node titles involved]\n")
+		TEXT("\n")
+		TEXT("[Repeat the ### block for each logical module found in the Blueprint]\n")
+		TEXT("\n")
+		TEXT("Rules:\n")
+		TEXT("- Group nodes by logical purpose, not by graph page\n")
+		TEXT("- Skip boilerplate/default nodes that add no meaningful logic\n")
+		TEXT("- Do NOT output any T3D, code snippets, or JSON\n")
+		TEXT("- Keep each explanation concise (1-3 sentences per module)");
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+void UAIBPHttpService::SendAnalysisRequest(
+	TSharedPtr<FJsonObject> ContextJson,
+	TSharedPtr<FJsonObject> GraphJson,
+	const FString& ApiKey,
+	const FString& ApiUrl,
+	TFunction<void(bool bSuccess, const FString& Result)> OnComplete)
+{
+	const UAIBPSettings* Settings = GetDefault<UAIBPSettings>();
+
+	const FString EffectiveUrl = ApiUrl.IsEmpty()
+		? (Settings ? Settings->ApiUrl : FString())
+		: ApiUrl;
+	const FString EffectiveKey = ApiKey.IsEmpty()
+		? (Settings ? Settings->ApiKey : FString())
+		: ApiKey;
+	const FString EffectiveModel  = Settings ? Settings->ModelName  : TEXT("gpt-4o");
+	const int32   EffectiveTokens = Settings ? Settings->MaxTokens  : 2048;
+	const float   EffectiveTemp   = Settings ? Settings->Temperature : 0.2f;
+
+	if (EffectiveUrl.IsEmpty())
+	{
+		OnComplete(false, TEXT("API URL is empty. Configure it in Project Settings > Plugins > AI Blueprint Assistant."));
+		return;
+	}
+
+	// Serialise ContextJson and GraphJson into strings for the user message
+	auto JsonToString = [](TSharedPtr<FJsonObject> Json) -> FString
+	{
+		if (!Json.IsValid()) { return TEXT("{}"); }
+		FString Out;
+		TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> W =
+			TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Out);
+		FJsonSerializer::Serialize(Json.ToSharedRef(), W);
+		return Out;
+	};
+
+	const FString UserContent = FString::Printf(
+		TEXT("Blueprint context (JSON):\n%s\n\nBlueprint graph nodes (JSON):\n%s"),
+		*JsonToString(ContextJson),
+		*JsonToString(GraphJson));
+
+	const FString RequestBody = BuildRequestBody(
+		GetAnalysisSystemPrompt(),
+		TArray<TSharedPtr<FJsonObject>>(),  // no conversation history for analysis
+		UserContent,
+		EffectiveModel, EffectiveTokens, EffectiveTemp);
+
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request =
+		FHttpModule::Get().CreateRequest();
+
+	Request->SetVerb(TEXT("POST"));
+	Request->SetURL(EffectiveUrl);
+	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+
+	if (!EffectiveKey.IsEmpty())
+	{
+		Request->SetHeader(TEXT("Authorization"),
+			FString::Printf(TEXT("Bearer %s"), *EffectiveKey));
+	}
+
+	Request->SetContentAsString(RequestBody);
+
+	Request->OnProcessRequestComplete().BindLambda(
+		[OnComplete](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
+		{
+			if (!bConnected || !Response.IsValid())
+			{
+				OnComplete(false, TEXT("HTTP request failed: could not connect to the server."));
+				return;
+			}
+
+			const int32 StatusCode = Response->GetResponseCode();
+			if (StatusCode < 200 || StatusCode >= 300)
+			{
+				OnComplete(false, FString::Printf(
+					TEXT("HTTP request failed with status %d: %s"),
+					StatusCode, *Response->GetContentAsString()));
+				return;
+			}
+
+			// Extract the text content from choices[0].message.content
+			TSharedPtr<FJsonObject> ResponseJson;
+			TSharedRef<TJsonReader<>> Reader =
+				TJsonReaderFactory<>::Create(Response->GetContentAsString());
+			if (!FJsonSerializer::Deserialize(Reader, ResponseJson) || !ResponseJson.IsValid())
+			{
+				OnComplete(false, TEXT("Failed to parse API response JSON."));
+				return;
+			}
+
+			const TArray<TSharedPtr<FJsonValue>>* Choices = nullptr;
+			if (!ResponseJson->TryGetArrayField(TEXT("choices"), Choices)
+				|| !Choices || Choices->IsEmpty())
+			{
+				OnComplete(false, TEXT("'choices' array missing or empty in API response."));
+				return;
+			}
+
+			const TSharedPtr<FJsonObject> FirstChoice = (*Choices)[0]->AsObject();
+			if (!FirstChoice.IsValid())
+			{
+				OnComplete(false, TEXT("Could not read first choice from API response."));
+				return;
+			}
+
+			const TSharedPtr<FJsonObject>* MessageObj = nullptr;
+			if (!FirstChoice->TryGetObjectField(TEXT("message"), MessageObj) || !MessageObj)
+			{
+				OnComplete(false, TEXT("'message' field missing in API response choice."));
+				return;
+			}
+
+			FString Content;
+			if (!(*MessageObj)->TryGetStringField(TEXT("content"), Content))
+			{
+				OnComplete(false, TEXT("'content' field missing in API response message."));
+				return;
+			}
+
+			OnComplete(true, Content.TrimStartAndEnd());
+		});
+
+	Request->ProcessRequest();
+}
 
 void UAIBPHttpService::SendRequest(
 	const FString& UserRequirement,
