@@ -169,35 +169,46 @@ FReply SAIBPAssistantWidget::OnGenerateClicked()
 
 	AppendLog(TEXT("[Info] Sending request to AI..."));
 
+	// Capture a weak ref so the callback does not access a destroyed widget
+	// if the tab is closed while the request is in flight.
+	TWeakPtr<SAIBPAssistantWidget> WeakThis = SharedThis(this);
+
 	// Fire async HTTP request
 	UAIBPHttpService::SendRequest(
 		UserReq,
 		ContextJson,
 		ApiKey,
 		ApiUrl,
-		[this](bool bSuccess, const FString& Result)
+		[WeakThis](bool bSuccess, const FString& Result)
 		{
 			// This callback may arrive on a background thread; marshal to GameThread.
-			AsyncTask(ENamedThreads::GameThread, [this, bSuccess, Result]()
+			AsyncTask(ENamedThreads::GameThread, [WeakThis, bSuccess, Result]()
 			{
+				TSharedPtr<SAIBPAssistantWidget> PinnedThis = WeakThis.Pin();
+				if (!PinnedThis.IsValid())
+				{
+					// Widget was destroyed before the response arrived; nothing to do.
+					return;
+				}
+
 				if (bSuccess)
 				{
-					AppendLog(TEXT("[Info] AI response received. Importing nodes..."));
+					PinnedThis->AppendLog(TEXT("[Info] AI response received. Importing nodes..."));
 					const bool bImported = FAIBPNodeFactory::ExecuteT3DImport(Result);
 					if (bImported)
 					{
-						AppendLog(TEXT("[Success] Blueprint nodes generated successfully."));
+						PinnedThis->AppendLog(TEXT("[Success] Blueprint nodes generated successfully."));
 					}
 					else
 					{
-						AppendLog(TEXT("[Error] Failed to import T3D nodes. See Message Log for details."));
+						PinnedThis->AppendLog(TEXT("[Error] Failed to import T3D nodes. See Message Log for details."));
 					}
 				}
 				else
 				{
-					AppendLog(FString::Printf(TEXT("[Error] Request failed: %s"), *Result));
+					PinnedThis->AppendLog(FString::Printf(TEXT("[Error] Request failed: %s"), *Result));
 				}
-				SetGenerating(false);
+				PinnedThis->SetGenerating(false);
 			});
 		}
 	);

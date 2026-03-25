@@ -31,6 +31,7 @@ public class AIBlueprintAssistant : ModuleRules
 			"EditorWidgets",   // Replaces deprecated EditorStyle (UE 5.1+)
 			"ToolMenus",
 			"ApplicationCore",
+			"MessageLog",      // FMessageLog category registration
 		});
 	}
 }
