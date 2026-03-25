@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Dom/JsonObject.h"
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/Input/SMultiLineEditableText.h"
 #include "Widgets/Input/SEditableText.h"
@@ -14,11 +15,14 @@
  * Main Slate UI panel for the AI Blueprint Assistant plugin.
  *
  * Layout (top to bottom):
- *   - API URL input field
- *   - API Key input field (password masked)
+ *   - Model info bar (model name read from settings, "New Conversation" button)
  *   - Multi-line requirement text editor
  *   - "Generate Blueprint Nodes" button
- *   - Scrollable status log
+ *   - Status text ("Ready" / "Generating...")
+ *   - Scrollable status/conversation log
+ *
+ * API URL and Key are no longer shown inline — configure them once in
+ * Edit > Project Settings > Plugins > AI Blueprint Assistant.
  */
 class SAIBPAssistantWidget : public SCompoundWidget
 {
@@ -32,19 +36,22 @@ private:
 	/** Fired when the user clicks "Generate Blueprint Nodes" */
 	FReply OnGenerateClicked();
 
-	/** Appends a line to the scrollable log and scrolls to the bottom */
+	/** Fired when the user clicks "New Conversation" */
+	FReply OnNewConversationClicked();
+
+	/** Shows a modal T3D preview window; returns true if the user confirmed import. */
+	bool ShowPreviewDialog(const FString& T3DCode);
+
+	/** Appends a line to the scrollable log and scrolls to the bottom. */
 	void AppendLog(const FString& Message);
 
-	/** Sets the button enabled/disabled state and updates status text */
-	void SetGenerating(bool bIsGenerating);
+	/** Sets the button enabled/disabled state and updates status text. */
+	void SetGenerating(bool bNewGenerating);
+
+	/** Returns label text for the model info bar (reads UAIBPSettings). */
+	FText GetModelInfoText() const;
 
 	// --- Slate widget references ---
-
-	/** API endpoint URL editable field */
-	TSharedPtr<SEditableText> ApiUrlInput;
-
-	/** API key editable field (password masked) */
-	TSharedPtr<SEditableText> ApiKeyInput;
 
 	/** Multi-line user requirement text editor */
 	TSharedPtr<SMultiLineEditableText> RequirementInput;
@@ -52,7 +59,7 @@ private:
 	/** The generate button — disabled while a request is in flight */
 	TSharedPtr<SButton> GenerateButton;
 
-	/** Short status label shown above the log ("Ready" / "Generating...") */
+	/** Short status label shown above the log */
 	TSharedPtr<STextBlock> StatusText;
 
 	/** Scrollable container for log entries */
@@ -62,4 +69,12 @@ private:
 
 	/** True while an HTTP request is in flight */
 	bool bIsGenerating = false;
+
+	/**
+	 * Multi-turn conversation history.
+	 * Each entry is a JSON object: { "role": "user"|"assistant", "content": "..." }
+	 * Populated only when UAIBPSettings::bEnableConversationHistory is true.
+	 * Cleared by clicking "New Conversation".
+	 */
+	TArray<TSharedPtr<FJsonObject>> ConversationHistory;
 };

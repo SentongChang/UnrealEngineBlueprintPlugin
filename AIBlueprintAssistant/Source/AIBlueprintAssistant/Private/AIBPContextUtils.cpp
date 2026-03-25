@@ -5,6 +5,7 @@
 #include "Engine/Blueprint.h"
 #include "Engine/SimpleConstructionScript.h"
 #include "Engine/SCS_Node.h"
+#include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphPin.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 
@@ -26,21 +27,22 @@ TSharedPtr<FJsonObject> UAIBPContextUtils::GetActiveBlueprintData()
 {
 	if (!GEditor)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("AIBPContextUtils: GEditor is null — cannot retrieve blueprint context."));
+		UE_LOG(LogTemp, Warning,
+			TEXT("AIBPContextUtils: GEditor is null — cannot retrieve blueprint context."));
 		return nullptr;
 	}
 
-	UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+	UAssetEditorSubsystem* AssetEditorSubsystem =
+		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
 	if (!AssetEditorSubsystem)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("AIBPContextUtils: UAssetEditorSubsystem not available."));
 		return nullptr;
 	}
 
-	// Iterate all currently open assets to find the first UBlueprint
+	// Find the first open Blueprint asset
 	UBlueprint* ActiveBlueprint = nullptr;
-	TArray<UObject*> EditedAssets = AssetEditorSubsystem->GetAllEditedAssets();
-	for (UObject* Asset : EditedAssets)
+	for (UObject* Asset : AssetEditorSubsystem->GetAllEditedAssets())
 	{
 		if (UBlueprint* BP = Cast<UBlueprint>(Asset))
 		{
@@ -51,7 +53,8 @@ TSharedPtr<FJsonObject> UAIBPContextUtils::GetActiveBlueprintData()
 
 	if (!ActiveBlueprint)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("AIBPContextUtils: No Blueprint asset is currently open in an editor."));
+		UE_LOG(LogTemp, Warning,
+			TEXT("AIBPContextUtils: No Blueprint asset is currently open in an editor."));
 		return nullptr;
 	}
 
@@ -64,19 +67,17 @@ TSharedPtr<FJsonObject> UAIBPContextUtils::GetActiveBlueprintData()
 
 TSharedPtr<FJsonObject> UAIBPContextUtils::BuildJsonFromBlueprint(UBlueprint* Blueprint)
 {
-	// This is an internal helper — declared inline here since the header only
-	// exposes VariableToJson and CollectComponents.
 	check(Blueprint);
 
 	TSharedPtr<FJsonObject> RootJson = MakeShared<FJsonObject>();
 
-	// --- Base class ---
+	// ---- Base class ----
 	const FString BaseClassName = Blueprint->ParentClass
 		? Blueprint->ParentClass->GetName()
 		: TEXT("Unknown");
 	RootJson->SetStringField(TEXT("baseClass"), BaseClassName);
 
-	// --- Variables ---
+	// ---- Variables ----
 	TArray<TSharedPtr<FJsonValue>> VariablesArray;
 	for (const FBPVariableDescription& VarDesc : Blueprint->NewVariables)
 	{
@@ -88,7 +89,7 @@ TSharedPtr<FJsonObject> UAIBPContextUtils::BuildJsonFromBlueprint(UBlueprint* Bl
 	}
 	RootJson->SetArrayField(TEXT("variables"), VariablesArray);
 
-	// --- Components (from SimpleConstructionScript) ---
+	// ---- Components (from SimpleConstructionScript) ----
 	TArray<TSharedPtr<FJsonValue>> ComponentsArray;
 	if (Blueprint->SimpleConstructionScript)
 	{
@@ -98,6 +99,29 @@ TSharedPtr<FJsonObject> UAIBPContextUtils::BuildJsonFromBlueprint(UBlueprint* Bl
 		}
 	}
 	RootJson->SetArrayField(TEXT("components"), ComponentsArray);
+
+	// ---- Functions (user-created function graphs, excluding EventGraph/Ubergraph) ----
+	TArray<TSharedPtr<FJsonValue>> FunctionsArray;
+	for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+	{
+		if (Graph)
+		{
+			FunctionsArray.Add(MakeShared<FJsonValueString>(Graph->GetName()));
+		}
+	}
+	RootJson->SetArrayField(TEXT("functions"), FunctionsArray);
+
+	// ---- Implemented Interfaces ----
+	TArray<TSharedPtr<FJsonValue>> InterfacesArray;
+	for (const FBPInterfaceDescription& InterfaceDesc : Blueprint->ImplementedInterfaces)
+	{
+		if (InterfaceDesc.Interface)
+		{
+			InterfacesArray.Add(
+				MakeShared<FJsonValueString>(InterfaceDesc.Interface->GetName()));
+		}
+	}
+	RootJson->SetArrayField(TEXT("interfaces"), InterfacesArray);
 
 	return RootJson;
 }
@@ -146,9 +170,5 @@ void UAIBPContextUtils::CollectComponents(USCS_Node* Node, TArray<TSharedPtr<FJs
 		CollectComponents(Child, OutArray);
 	}
 }
-
-// Provide the missing declaration that was forward-declared in the header
-// as a private static but not listed as a member (BuildJsonFromBlueprint).
-// Actually we declared it inline above. The header only needs the two listed privates.
 
 #undef LOCTEXT_NAMESPACE

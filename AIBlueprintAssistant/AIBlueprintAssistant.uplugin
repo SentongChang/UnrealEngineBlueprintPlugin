@@ -3,7 +3,7 @@
 	"Version": 1,
 	"VersionName": "1.0",
 	"FriendlyName": "AI Blueprint Assistant",
-	"Description": "An AI-powered editor plugin that generates Unreal Engine 5.6 Blueprint nodes from natural language descriptions.",
+	"Description": "An AI-powered editor plugin that generates Unreal Engine Blueprint nodes from natural language descriptions. Supports UE 5.0 through 5.6+.",
 	"Category": "Editor",
 	"CreatedBy": "AIBlueprintAssistant",
 	"CreatedByURL": "",

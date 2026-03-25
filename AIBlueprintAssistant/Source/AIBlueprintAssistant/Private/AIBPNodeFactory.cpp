@@ -56,10 +56,15 @@ bool FAIBPNodeFactory::ExecuteT3DImport(const FString& T3DCode)
 	Blueprint->Modify();
 
 	// --- Import nodes from T3D text ---
-	// Note: In UE5.4+ ImportNodesFromText returns void; use the ExportedNodes out-param
-	// to detect which nodes were actually created.
+	// ImportNodesFromText API changed in UE 5.4:
+	//   UE 5.0–5.3: returns TSet<UEdGraphNode*> directly (no out-param overload)
+	//   UE 5.4+:    returns void, nodes collected via TSet* out-param
 	TSet<UEdGraphNode*> ImportedNodes;
+#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 4
 	FEdGraphUtilities::ImportNodesFromText(Graph, T3DCode, &ImportedNodes);
+#else
+	ImportedNodes = FEdGraphUtilities::ImportNodesFromText(Graph, T3DCode);
+#endif
 
 	if (ImportedNodes.IsEmpty())
 	{
@@ -69,7 +74,7 @@ bool FAIBPNodeFactory::ExecuteT3DImport(const FString& T3DCode)
 		FMessageLog("AIBlueprintAssistant").Error(
 			LOCTEXT("ImportFailed",
 					"ExecuteT3DImport: FEdGraphUtilities::ImportNodesFromText produced no nodes. "
-					"The T3D code may be malformed or incompatible with UE 5.6."));
+					"The T3D code may be malformed or incompatible with this engine version."));
 		FMessageLog("AIBlueprintAssistant").Open(EMessageSeverity::Error);
 		return false;
 	}

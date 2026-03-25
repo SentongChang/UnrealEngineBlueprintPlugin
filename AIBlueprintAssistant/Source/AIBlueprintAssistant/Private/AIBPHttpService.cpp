@@ -1,6 +1,7 @@
 // Copyright (c) 2026 AIBlueprintAssistant. All Rights Reserved.
 
 #include "AIBPHttpService.h"
+#include "AIBPSettings.h"
 
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
@@ -14,21 +15,96 @@
 #define LOCTEXT_NAMESPACE "UAIBPHttpService"
 
 // ---------------------------------------------------------------------------
-// System Prompt
+// Default System Prompt (with Few-Shot T3D examples)
 // ---------------------------------------------------------------------------
 
-const TCHAR* UAIBPHttpService::SystemPrompt =
-TEXT(
-"你现在是一个虚幻引擎 5.6 蓝图专家。\n"
-"输入：用户需求 + 蓝图当前变量/组件上下文（JSON 格式）。\n"
-"输出要求：\n"
-"1. 仅输出以 Begin Object Class= 开头并以 End Object 结尾的 T3D 格式文本。\n"
-"2. 严禁输出任何解释性文字、代码块标记（如 ```）或其他内容。\n"
-"3. 必须使用上下文提供的变量名和组件名进行连线。\n"
-"4. 优先使用 UE 5.6 的新 API（如 Enhanced Input）。\n"
-"5. 确保节点之间的连接（Pin Links）逻辑严密，所有引脚均正确配对。\n"
-"6. 直接从 Begin Object 开始输出，不要有任何前缀文本。"
-);
+FString UAIBPHttpService::GetDefaultSystemPrompt()
+{
+	// Read target version from project settings; fall back to compile-time engine
+	// version if settings are unavailable (e.g. during automated tests).
+	const UAIBPSettings* Settings = GetDefault<UAIBPSettings>();
+	const int32 MajorVer = Settings ? Settings->TargetEngineVersionMajor : ENGINE_MAJOR_VERSION;
+	const int32 MinorVer = Settings ? Settings->TargetEngineVersionMinor : ENGINE_MINOR_VERSION;
+	const FString Ver = FString::Printf(TEXT("%d.%d"), MajorVer, MinorVer);
+
+	const FString Line1 = FString::Printf(
+		TEXT("You are an Unreal Engine %s Blueprint expert.\n"), *Ver);
+	const FString Line4 = FString::Printf(
+		TEXT("4. Prefer UE %s APIs (Enhanced Input, etc.) over deprecated ones.\n"), *Ver);
+
+	return Line1
+		+ TEXT("Input: a natural-language requirement from the user, plus a JSON snapshot of the\n")
+		TEXT("currently open Blueprint (baseClass, variables, components, functions, interfaces).\n")
+		TEXT("\n")
+		TEXT("Output rules:\n")
+		TEXT("1. Output ONLY raw T3D text. Start directly with 'Begin Object Class=' — no preamble.\n")
+		TEXT("2. Do NOT output markdown fences (```), explanations, or any other text.\n")
+		TEXT("3. Use the variable/component/function names exactly as they appear in the JSON context.\n")
+		+ Line4
+		+ TEXT("5. Ensure every Pin link is logically complete and correctly paired.\n")
+		TEXT("6. You may output multiple Begin Object / End Object blocks for multi-node graphs.\n")
+		TEXT("\n")
+		TEXT("--- FEW-SHOT EXAMPLE 1 ---\n")
+		TEXT("User: Print 'Hello' on BeginPlay.\n")
+		TEXT("Assistant:\n")
+		TEXT("Begin Object Class=/Script/BlueprintGraph.K2Node_Event Name=\"K2Node_Event_0\"\n")
+		TEXT("   EventReference=(MemberParent=Class'/Script/Engine.Actor',MemberName=\"ReceiveBeginPlay\")\n")
+		TEXT("   bOverrideFunction=True\n")
+		TEXT("   NodePosX=0\n")
+		TEXT("   NodePosY=0\n")
+		TEXT("   NodeGuid=A1000000000000000000000000000001\n")
+		TEXT("   CustomProperties Pin (PinId=A1000000000000000000000000000010,PinName=\"OutputDelegate\",")
+		TEXT("PinType.PinCategory=\"delegate\",Direction=\"EGPD_Output\")\n")
+		TEXT("   CustomProperties Pin (PinId=A1000000000000000000000000000011,PinName=\"then\",")
+		TEXT("PinType.PinCategory=\"exec\",Direction=\"EGPD_Output\",")
+		TEXT("LinkedTo=(K2Node_CallFunction_0 B1000000000000000000000000000010,))\n")
+		TEXT("End Object\n")
+		TEXT("Begin Object Class=/Script/BlueprintGraph.K2Node_CallFunction Name=\"K2Node_CallFunction_0\"\n")
+		TEXT("   FunctionReference=(MemberParent=Class'/Script/Engine.KismetSystemLibrary',MemberName=\"PrintString\")\n")
+		TEXT("   NodePosX=300\n")
+		TEXT("   NodePosY=0\n")
+		TEXT("   NodeGuid=B1000000000000000000000000000001\n")
+		TEXT("   CustomProperties Pin (PinId=B1000000000000000000000000000010,PinName=\"execute\",")
+		TEXT("PinType.PinCategory=\"exec\",")
+		TEXT("LinkedTo=(K2Node_Event_0 A1000000000000000000000000000011,))\n")
+		TEXT("   CustomProperties Pin (PinId=B1000000000000000000000000000011,PinName=\"then\",")
+		TEXT("PinType.PinCategory=\"exec\",Direction=\"EGPD_Output\")\n")
+		TEXT("   CustomProperties Pin (PinId=B1000000000000000000000000000012,PinName=\"InString\",")
+		TEXT("PinType.PinCategory=\"string\",DefaultValue=\"Hello\")\n")
+		TEXT("End Object\n")
+		TEXT("\n")
+		TEXT("--- FEW-SHOT EXAMPLE 2 ---\n")
+		TEXT("User: On BeginPlay, set variable Health to 100.\n")
+		TEXT("Context: { \"variables\": [{\"name\":\"Health\",\"type\":\"float\"}] }\n")
+		TEXT("Assistant:\n")
+		TEXT("Begin Object Class=/Script/BlueprintGraph.K2Node_Event Name=\"K2Node_Event_0\"\n")
+		TEXT("   EventReference=(MemberParent=Class'/Script/Engine.Actor',MemberName=\"ReceiveBeginPlay\")\n")
+		TEXT("   bOverrideFunction=True\n")
+		TEXT("   NodePosX=0\n")
+		TEXT("   NodePosY=0\n")
+		TEXT("   NodeGuid=A2000000000000000000000000000001\n")
+		TEXT("   CustomProperties Pin (PinId=A2000000000000000000000000000010,PinName=\"OutputDelegate\",")
+		TEXT("PinType.PinCategory=\"delegate\",Direction=\"EGPD_Output\")\n")
+		TEXT("   CustomProperties Pin (PinId=A2000000000000000000000000000011,PinName=\"then\",")
+		TEXT("PinType.PinCategory=\"exec\",Direction=\"EGPD_Output\",")
+		TEXT("LinkedTo=(K2Node_VariableSet_0 B2000000000000000000000000000010,))\n")
+		TEXT("End Object\n")
+		TEXT("Begin Object Class=/Script/BlueprintGraph.K2Node_VariableSet Name=\"K2Node_VariableSet_0\"\n")
+		TEXT("   VariableReference=(MemberName=\"Health\",bSelfContext=True)\n")
+		TEXT("   NodePosX=300\n")
+		TEXT("   NodePosY=0\n")
+		TEXT("   NodeGuid=B2000000000000000000000000000001\n")
+		TEXT("   CustomProperties Pin (PinId=B2000000000000000000000000000010,PinName=\"execute\",")
+		TEXT("PinType.PinCategory=\"exec\",")
+		TEXT("LinkedTo=(K2Node_Event_0 A2000000000000000000000000000011,))\n")
+		TEXT("   CustomProperties Pin (PinId=B2000000000000000000000000000011,PinName=\"then\",")
+		TEXT("PinType.PinCategory=\"exec\",Direction=\"EGPD_Output\")\n")
+		TEXT("   CustomProperties Pin (PinId=B2000000000000000000000000000012,PinName=\"Health\",")
+		TEXT("PinType.PinCategory=\"real\",PinType.PinSubCategory=\"float\",DefaultValue=\"100.000000\")\n")
+		TEXT("End Object\n")
+		TEXT("\n")
+		+ TEXT("Now generate T3D for the user's requirement. Output ONLY the T3D blocks, nothing else.");
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -39,31 +115,64 @@ void UAIBPHttpService::SendRequest(
 	TSharedPtr<FJsonObject> ContextJson,
 	const FString& ApiKey,
 	const FString& ApiUrl,
+	const TArray<TSharedPtr<FJsonObject>>& ConversationHistory,
 	TFunction<void(bool bSuccess, const FString& Result)> OnComplete)
 {
-	if (ApiUrl.IsEmpty())
+	// Resolve effective settings: prefer explicit args, fall back to UAIBPSettings.
+	const UAIBPSettings* Settings = GetDefault<UAIBPSettings>();
+
+	const FString EffectiveUrl = ApiUrl.IsEmpty()
+		? (Settings ? Settings->ApiUrl : FString())
+		: ApiUrl;
+	const FString EffectiveKey = ApiKey.IsEmpty()
+		? (Settings ? Settings->ApiKey : FString())
+		: ApiKey;
+	const FString EffectiveModel = Settings ? Settings->ModelName : TEXT("gpt-4o");
+	const int32   EffectiveTokens = Settings ? Settings->MaxTokens : 2048;
+	const float   EffectiveTemp   = Settings ? Settings->Temperature : 0.2f;
+	const FString SystemPrompt    = (Settings && !Settings->CustomSystemPrompt.IsEmpty())
+		? Settings->CustomSystemPrompt
+		: GetDefaultSystemPrompt();
+
+	if (EffectiveUrl.IsEmpty())
 	{
-		OnComplete(false, TEXT("API URL is empty. Please configure the endpoint URL."));
+		OnComplete(false, TEXT("API URL is empty. Configure it in Project Settings > Plugins > AI Blueprint Assistant."));
 		return;
 	}
 
-	const FString RequestBody = BuildRequestBody(UserRequirement, ContextJson);
+	// Build user message content: requirement + context JSON
+	FString ContextStr;
+	if (ContextJson.IsValid())
+	{
+		TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+			TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ContextStr);
+		FJsonSerializer::Serialize(ContextJson.ToSharedRef(), Writer);
+	}
+
+	const FString UserContent = FString::Printf(
+		TEXT("User requirement:\n%s\n\nBlueprint context (JSON):\n%s"),
+		*UserRequirement,
+		ContextStr.IsEmpty() ? TEXT("{}") : *ContextStr);
+
+	const FString RequestBody = BuildRequestBody(
+		SystemPrompt, ConversationHistory, UserContent,
+		EffectiveModel, EffectiveTokens, EffectiveTemp);
 
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request =
 		FHttpModule::Get().CreateRequest();
 
 	Request->SetVerb(TEXT("POST"));
-	Request->SetURL(ApiUrl);
+	Request->SetURL(EffectiveUrl);
 	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
 
-	if (!ApiKey.IsEmpty())
+	if (!EffectiveKey.IsEmpty())
 	{
-		Request->SetHeader(TEXT("Authorization"), FString::Printf(TEXT("Bearer %s"), *ApiKey));
+		Request->SetHeader(TEXT("Authorization"),
+			FString::Printf(TEXT("Bearer %s"), *EffectiveKey));
 	}
 
 	Request->SetContentAsString(RequestBody);
 
-	// Capture OnComplete by value so it outlives this stack frame
 	Request->OnProcessRequestComplete().BindLambda(
 		[OnComplete](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnectedSuccessfully)
 		{
@@ -78,8 +187,7 @@ void UAIBPHttpService::SendRequest(
 			{
 				const FString ErrorMsg = FString::Printf(
 					TEXT("HTTP request failed with status %d: %s"),
-					StatusCode,
-					*Response->GetContentAsString());
+					StatusCode, *Response->GetContentAsString());
 				OnComplete(false, ErrorMsg);
 				return;
 			}
@@ -90,7 +198,7 @@ void UAIBPHttpService::SendRequest(
 				OnComplete(false,
 					TEXT("Could not extract T3D code from the AI response. "
 						 "The model may have returned an explanation instead of raw T3D. "
-						 "Check your system prompt or retry."));
+						 "Try adjusting the system prompt or retry."));
 				return;
 			}
 
@@ -105,36 +213,33 @@ void UAIBPHttpService::SendRequest(
 // ---------------------------------------------------------------------------
 
 FString UAIBPHttpService::BuildRequestBody(
-	const FString& UserRequirement,
-	TSharedPtr<FJsonObject> ContextJson)
+	const FString& SystemPrompt,
+	const TArray<TSharedPtr<FJsonObject>>& ConversationHistory,
+	const FString& UserContent,
+	const FString& ModelName,
+	int32 MaxTokens,
+	float Temperature)
 {
-	// Serialise the context JSON to a compact string
-	FString ContextStr;
-	if (ContextJson.IsValid())
-	{
-		TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
-			TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ContextStr);
-		FJsonSerializer::Serialize(ContextJson.ToSharedRef(), Writer);
-	}
-
-	// User message combines the natural-language requirement and the context blob
-	const FString UserContent = FString::Printf(
-		TEXT("用户需求：\n%s\n\n蓝图上下文（JSON）：\n%s"),
-		*UserRequirement,
-		ContextStr.IsEmpty() ? TEXT("{}") : *ContextStr);
-
-	// Build the messages array
 	TArray<TSharedPtr<FJsonValue>> Messages;
 
-	// System message
+	// System message (always first)
 	{
 		TSharedPtr<FJsonObject> SysMsg = MakeShared<FJsonObject>();
 		SysMsg->SetStringField(TEXT("role"),    TEXT("system"));
-		SysMsg->SetStringField(TEXT("content"), FString(SystemPrompt));
+		SysMsg->SetStringField(TEXT("content"), SystemPrompt);
 		Messages.Add(MakeShared<FJsonValueObject>(SysMsg));
 	}
 
-	// User message
+	// Conversation history (multi-turn): inject prior user/assistant turns
+	for (const TSharedPtr<FJsonObject>& HistoryMsg : ConversationHistory)
+	{
+		if (HistoryMsg.IsValid())
+		{
+			Messages.Add(MakeShared<FJsonValueObject>(HistoryMsg));
+		}
+	}
+
+	// Current user message
 	{
 		TSharedPtr<FJsonObject> UserMsg = MakeShared<FJsonObject>();
 		UserMsg->SetStringField(TEXT("role"),    TEXT("user"));
@@ -142,12 +247,11 @@ FString UAIBPHttpService::BuildRequestBody(
 		Messages.Add(MakeShared<FJsonValueObject>(UserMsg));
 	}
 
-	// Root request object
 	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
-	Root->SetStringField(TEXT("model"),       TEXT("gpt-4o"));
+	Root->SetStringField(TEXT("model"),       ModelName);
 	Root->SetArrayField(TEXT("messages"),     Messages);
-	Root->SetNumberField(TEXT("max_tokens"),  2048);
-	Root->SetNumberField(TEXT("temperature"), 0.2);   // Lower = more deterministic T3D output
+	Root->SetNumberField(TEXT("max_tokens"),  MaxTokens);
+	Root->SetNumberField(TEXT("temperature"), Temperature);
 
 	FString OutputString;
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
@@ -157,7 +261,6 @@ FString UAIBPHttpService::BuildRequestBody(
 
 FString UAIBPHttpService::ExtractT3DFromResponse(const FString& ResponseBody)
 {
-	// Parse the OpenAI-style JSON response
 	TSharedPtr<FJsonObject> ResponseJson;
 	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseBody);
 	if (!FJsonSerializer::Deserialize(Reader, ResponseJson) || !ResponseJson.IsValid())
@@ -176,7 +279,8 @@ FString UAIBPHttpService::ExtractT3DFromResponse(const FString& ResponseBody)
 		return FString();
 	}
 
-	const TSharedPtr<FJsonObject>* FirstChoice = (*Choices)[0]->AsObjectChecked() ? &(*Choices)[0]->AsObject() : nullptr;
+	const TSharedPtr<FJsonObject>* FirstChoice =
+		(*Choices)[0]->AsObjectChecked() ? &(*Choices)[0]->AsObject() : nullptr;
 	if (!FirstChoice || !(*FirstChoice).IsValid())
 	{
 		return FString();
@@ -194,29 +298,27 @@ FString UAIBPHttpService::ExtractT3DFromResponse(const FString& ResponseBody)
 		return FString();
 	}
 
-	// Strip any accidental markdown code fences the model may have added
+	// Strip accidental markdown fences the model may have added
 	Content = Content.TrimStartAndEnd();
 	if (Content.StartsWith(TEXT("```")))
 	{
-		// Remove the opening fence line
 		int32 NewlineIdx = INDEX_NONE;
 		Content.FindChar(TEXT('\n'), NewlineIdx);
 		if (NewlineIdx != INDEX_NONE)
 		{
 			Content = Content.RightChop(NewlineIdx + 1);
 		}
-		// Remove the closing fence
 		if (Content.EndsWith(TEXT("```")))
 		{
 			Content = Content.LeftChop(3).TrimEnd();
 		}
 	}
 
-	// Validate that we actually have a T3D block
+	// Validate T3D block presence
 	if (!Content.Contains(TEXT("Begin Object Class=")) && !Content.Contains(TEXT("BEGIN OBJECT CLASS=")))
 	{
 		UE_LOG(LogTemp, Warning,
-			TEXT("AIBPHttpService: Response content does not contain a T3D Begin Object block."));
+			TEXT("AIBPHttpService: Response does not contain a T3D Begin Object block."));
 		return FString();
 	}
 

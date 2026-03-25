@@ -4,9 +4,12 @@
 #include "AIBPContextUtils.h"
 #include "AIBPHttpService.h"
 #include "AIBPNodeFactory.h"
+#include "AIBPSettings.h"
+#include "SAIBPPreviewDialog.h"
 
 #include "Async/Async.h"
-#include "Styling/AppStyle.h"          // FAppStyle (replaces deprecated FEditorStyle)
+#include "Framework/Application/SlateApplication.h"
+#include "Styling/AppStyle.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SSpacer.h"
 #include "Widgets/Layout/SBox.h"
@@ -24,54 +27,55 @@ void SAIBPAssistantWidget::Construct(const FArguments& InArgs)
 		[
 			SNew(SVerticalBox)
 
-			// ---- API URL ----
+			// ---- Model Info Bar ----
 			+ SVerticalBox::Slot()
 			.AutoHeight()
-			.Padding(0.f, 4.f)
+			.Padding(0.f, 0.f, 0.f, 6.f)
 			[
-				SNew(SVerticalBox)
-				+ SVerticalBox::Slot()
-				.AutoHeight()
+				SNew(SHorizontalBox)
+
+				// Model name (live from settings)
+				+ SHorizontalBox::Slot()
+				.VAlign(VAlign_Center)
+				.FillWidth(1.f)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("ApiUrlLabel", "API URL"))
+					.Text(this, &SAIBPAssistantWidget::GetModelInfoText)
 					.Font(FAppStyle::GetFontStyle("SmallFont"))
+					.ColorAndOpacity(FSlateColor(FLinearColor(0.7f, 0.7f, 0.7f)))
 				]
-				+ SVerticalBox::Slot()
-				.AutoHeight()
+
+				// "New Conversation" button (clears history)
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
 				[
-					SAssignNew(ApiUrlInput, SEditableText)
-					.HintText(LOCTEXT("ApiUrlHint", "https://api.openai.com/v1/chat/completions"))
-					.Text(FText::FromString(TEXT("https://api.openai.com/v1/chat/completions")))
+					SNew(SButton)
+					.Text(LOCTEXT("NewConversationBtn", "New Conversation"))
+					.ToolTipText(LOCTEXT("NewConversationTooltip",
+						"Clear conversation history and start a fresh session."))
+					.OnClicked(this, &SAIBPAssistantWidget::OnNewConversationClicked)
 				]
 			]
 
-			// ---- API Key ----
+			// ---- Settings hint ----
 			+ SVerticalBox::Slot()
 			.AutoHeight()
-			.Padding(0.f, 4.f)
+			.Padding(0.f, 0.f, 0.f, 6.f)
 			[
-				SNew(SVerticalBox)
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				[
-					SNew(STextBlock)
-					.Text(LOCTEXT("ApiKeyLabel", "API Key"))
-					.Font(FAppStyle::GetFontStyle("SmallFont"))
-				]
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				[
-					SAssignNew(ApiKeyInput, SEditableText)
-					.HintText(LOCTEXT("ApiKeyHint", "sk-..."))
-					.IsPassword(true)
-				]
+				SNew(STextBlock)
+				.Text(LOCTEXT("SettingsHint",
+					"Configure API URL, key, model, and prompt in:\n"
+					"Edit \u2192 Project Settings \u2192 Plugins \u2192 AI Blueprint Assistant"))
+				.Font(FAppStyle::GetFontStyle("SmallFont"))
+				.ColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.55f, 0.55f)))
+				.AutoWrapText(true)
 			]
 
 			// ---- Requirement Input ----
 			+ SVerticalBox::Slot()
 			.AutoHeight()
-			.Padding(0.f, 4.f)
+			.Padding(0.f, 0.f, 0.f, 4.f)
 			[
 				SNew(SVerticalBox)
 				+ SVerticalBox::Slot()
@@ -89,7 +93,8 @@ void SAIBPAssistantWidget::Construct(const FArguments& InArgs)
 					.Padding(FMargin(4.f))
 					[
 						SAssignNew(RequirementInput, SMultiLineEditableText)
-						.HintText(LOCTEXT("RequirementHint", "e.g. When the player overlaps with TriggerBox, print the player's health variable to screen."))
+						.HintText(LOCTEXT("RequirementHint",
+							"e.g. On BeginPlay, set Health to 100 and print it to screen."))
 						.AutoWrapText(true)
 					]
 				]
@@ -140,9 +145,9 @@ FReply SAIBPAssistantWidget::OnGenerateClicked()
 		return FReply::Handled();
 	}
 
-	const FString ApiUrl  = ApiUrlInput  ? ApiUrlInput->GetText().ToString()  : FString();
-	const FString ApiKey  = ApiKeyInput  ? ApiKeyInput->GetText().ToString()  : FString();
-	const FString UserReq = RequirementInput ? RequirementInput->GetText().ToString() : FString();
+	const FString UserReq = RequirementInput
+		? RequirementInput->GetText().ToString()
+		: FString();
 
 	if (UserReq.IsEmpty())
 	{
@@ -150,70 +155,162 @@ FReply SAIBPAssistantWidget::OnGenerateClicked()
 		return FReply::Handled();
 	}
 
+	// Read settings for API credentials
+	const UAIBPSettings* Settings = GetDefault<UAIBPSettings>();
+	const FString ApiUrl = Settings ? Settings->ApiUrl : FString();
+	const FString ApiKey = Settings ? Settings->ApiKey : FString();
+
 	if (ApiKey.IsEmpty())
 	{
-		AppendLog(TEXT("[Warning] No API key provided — request may be rejected by the server."));
+		AppendLog(TEXT("[Warning] No API key configured — request may be rejected. "
+					   "Set it in Project Settings > Plugins > AI Blueprint Assistant."));
 	}
 
 	SetGenerating(true);
-	AppendLog(TEXT("[Info] Fetching blueprint context..."));
+	AppendLog(TEXT("[Info] Fetching Blueprint context..."));
 
-	// Extract current blueprint context
 	TSharedPtr<FJsonObject> ContextJson = UAIBPContextUtils::GetActiveBlueprintData();
-
 	if (!ContextJson.IsValid())
 	{
-		AppendLog(TEXT("[Warning] No active Blueprint editor found. Sending request without context."));
+		AppendLog(TEXT("[Warning] No active Blueprint editor found — sending request without context."));
 		ContextJson = MakeShared<FJsonObject>();
 	}
 
 	AppendLog(TEXT("[Info] Sending request to AI..."));
 
-	// Capture a weak ref so the callback does not access a destroyed widget
-	// if the tab is closed while the request is in flight.
+	// Build conversation history to pass (empty array if history is disabled)
+	const bool bUseHistory = Settings ? Settings->bEnableConversationHistory : false;
+	TArray<TSharedPtr<FJsonObject>> HistoryToSend = bUseHistory ? ConversationHistory : TArray<TSharedPtr<FJsonObject>>();
+
+	// Snapshot user content for history recording after the response
+	FString ContextStr;
+	if (ContextJson.IsValid())
+	{
+		TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+			TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ContextStr);
+		FJsonSerializer::Serialize(ContextJson.ToSharedRef(), Writer);
+	}
+	const FString UserContent = FString::Printf(
+		TEXT("User requirement:\n%s\n\nBlueprint context (JSON):\n%s"),
+		*UserReq,
+		ContextStr.IsEmpty() ? TEXT("{}") : *ContextStr);
+
+	// Prevent use-after-free if the tab is closed while the request is in flight
 	TWeakPtr<SAIBPAssistantWidget> WeakThis = SharedThis(this);
 
-	// Fire async HTTP request
 	UAIBPHttpService::SendRequest(
 		UserReq,
 		ContextJson,
 		ApiKey,
 		ApiUrl,
-		[WeakThis](bool bSuccess, const FString& Result)
+		HistoryToSend,
+		[WeakThis, bUseHistory, UserContent](bool bSuccess, const FString& Result)
 		{
-			// This callback may arrive on a background thread; marshal to GameThread.
-			AsyncTask(ENamedThreads::GameThread, [WeakThis, bSuccess, Result]()
+			// Marshal back to GameThread for all UObject / Slate access
+			AsyncTask(ENamedThreads::GameThread, [WeakThis, bSuccess, Result, bUseHistory, UserContent]()
 			{
 				TSharedPtr<SAIBPAssistantWidget> PinnedThis = WeakThis.Pin();
 				if (!PinnedThis.IsValid())
 				{
-					// Widget was destroyed before the response arrived; nothing to do.
 					return;
 				}
 
-				if (bSuccess)
+				if (!bSuccess)
 				{
-					PinnedThis->AppendLog(TEXT("[Info] AI response received. Importing nodes..."));
-					const bool bImported = FAIBPNodeFactory::ExecuteT3DImport(Result);
-					if (bImported)
+					PinnedThis->AppendLog(FString::Printf(
+						TEXT("[Error] Request failed: %s"), *Result));
+					PinnedThis->SetGenerating(false);
+					return;
+				}
+
+				PinnedThis->AppendLog(TEXT("[Info] AI response received."));
+
+				// ---- Optional preview dialog ----
+				const UAIBPSettings* Cfg = GetDefault<UAIBPSettings>();
+				const bool bPreview = Cfg ? Cfg->bShowPreviewDialog : false;
+				bool bShouldImport = true;
+
+				if (bPreview)
+				{
+					bShouldImport = PinnedThis->ShowPreviewDialog(Result);
+					if (!bShouldImport)
 					{
-						PinnedThis->AppendLog(TEXT("[Success] Blueprint nodes generated successfully."));
+						PinnedThis->AppendLog(TEXT("[Info] Import cancelled by user."));
+						PinnedThis->SetGenerating(false);
+						return;
 					}
-					else
+				}
+
+				// ---- Import nodes ----
+				PinnedThis->AppendLog(TEXT("[Info] Importing nodes into Blueprint graph..."));
+				const bool bImported = FAIBPNodeFactory::ExecuteT3DImport(Result);
+				if (bImported)
+				{
+					PinnedThis->AppendLog(TEXT("[Success] Blueprint nodes generated successfully."));
+
+					// Record this turn in conversation history (if enabled)
+					if (bUseHistory)
 					{
-						PinnedThis->AppendLog(TEXT("[Error] Failed to import T3D nodes. See Message Log for details."));
+						TSharedPtr<FJsonObject> UserMsg = MakeShared<FJsonObject>();
+						UserMsg->SetStringField(TEXT("role"),    TEXT("user"));
+						UserMsg->SetStringField(TEXT("content"), UserContent);
+
+						TSharedPtr<FJsonObject> AssistantMsg = MakeShared<FJsonObject>();
+						AssistantMsg->SetStringField(TEXT("role"),    TEXT("assistant"));
+						AssistantMsg->SetStringField(TEXT("content"), Result);
+
+						PinnedThis->ConversationHistory.Add(UserMsg);
+						PinnedThis->ConversationHistory.Add(AssistantMsg);
+
+						PinnedThis->AppendLog(FString::Printf(
+							TEXT("[Info] Conversation history: %d turn(s) recorded."),
+							PinnedThis->ConversationHistory.Num() / 2));
 					}
 				}
 				else
 				{
-					PinnedThis->AppendLog(FString::Printf(TEXT("[Error] Request failed: %s"), *Result));
+					PinnedThis->AppendLog(
+						TEXT("[Error] Failed to import T3D nodes. See Message Log for details."));
 				}
+
 				PinnedThis->SetGenerating(false);
 			});
 		}
 	);
 
 	return FReply::Handled();
+}
+
+FReply SAIBPAssistantWidget::OnNewConversationClicked()
+{
+	const int32 PreviousTurns = ConversationHistory.Num() / 2;
+	ConversationHistory.Empty();
+	AppendLog(FString::Printf(
+		TEXT("[Info] Conversation history cleared (%d turn(s) removed). Ready for a new session."),
+		PreviousTurns));
+	return FReply::Handled();
+}
+
+bool SAIBPAssistantWidget::ShowPreviewDialog(const FString& T3DCode)
+{
+	TSharedRef<SWindow> PreviewWindow = SNew(SWindow)
+		.Title(LOCTEXT("PreviewWindowTitle", "AI Blueprint Assistant — Review Generated Nodes"))
+		.ClientSize(FVector2D(700.f, 500.f))
+		.SupportsMinimize(false)
+		.SupportsMaximize(true)
+		.SizingRule(ESizingRule::UserSized);
+
+	TSharedRef<SAIBPPreviewDialog> DialogContent =
+		SNew(SAIBPPreviewDialog)
+		.T3DCode(T3DCode)
+		.ParentWindow(PreviewWindow);
+
+	PreviewWindow->SetContent(DialogContent);
+
+	// AddModalWindow blocks until the window is closed
+	FSlateApplication::Get().AddModalWindow(PreviewWindow, SharedThis(this));
+
+	return DialogContent->WasConfirmed();
 }
 
 void SAIBPAssistantWidget::AppendLog(const FString& Message)
@@ -231,7 +328,6 @@ void SAIBPAssistantWidget::AppendLog(const FString& Message)
 		.AutoWrapText(true)
 	];
 
-	// Scroll to bottom
 	LogScrollBox->ScrollToEnd();
 }
 
@@ -257,6 +353,36 @@ void SAIBPAssistantWidget::SetGenerating(bool bNewGenerating)
 			StatusText->SetColorAndOpacity(FSlateColor(FLinearColor(0.5f, 0.9f, 0.5f)));
 		}
 	}
+}
+
+FText SAIBPAssistantWidget::GetModelInfoText() const
+{
+	const UAIBPSettings* Settings = GetDefault<UAIBPSettings>();
+	if (!Settings)
+	{
+		return LOCTEXT("ModelInfoUnknown", "Model: (unknown)");
+	}
+
+	const bool bHasKey = !Settings->ApiKey.IsEmpty();
+	const bool bHasHistory = Settings->bEnableConversationHistory;
+	const int32 HistoryTurns = ConversationHistory.Num() / 2;
+
+	FString Info = FString::Printf(TEXT("Model: %s"), *Settings->ModelName);
+
+	// Show which UE version the AI is targeting — updates instantly when changed in Project Settings.
+	Info += FString::Printf(TEXT("  |  Target UE: %d.%d"),
+		Settings->TargetEngineVersionMajor,
+		Settings->TargetEngineVersionMinor);
+
+	if (!bHasKey)
+	{
+		Info += TEXT("  |  [No API Key]");
+	}
+	if (bHasHistory)
+	{
+		Info += FString::Printf(TEXT("  |  History: %d turn(s)"), HistoryTurns);
+	}
+	return FText::FromString(Info);
 }
 
 #undef LOCTEXT_NAMESPACE

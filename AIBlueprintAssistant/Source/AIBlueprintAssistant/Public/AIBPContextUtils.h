@@ -9,13 +9,16 @@
 /**
  * Static utility class that extracts structured context data from the currently
  * active Blueprint editor. The returned JSON is forwarded to the AI API so that
- * it can generate nodes that reference existing variables and components.
+ * it can generate nodes referencing existing variables, components, functions,
+ * and interfaces.
  *
  * Returned JSON structure:
  * {
  *   "baseClass":   "Character",
  *   "variables":   [ { "name": "Health", "type": "float" }, ... ],
- *   "components":  [ { "name": "SkeletalMeshComponent0", "class": "SkeletalMeshComponent" }, ... ]
+ *   "components":  [ { "name": "SkeletalMeshComponent0", "class": "SkeletalMeshComponent" }, ... ],
+ *   "functions":   [ "Sprint", "TakeDamage_Custom", ... ],
+ *   "interfaces":  [ "BPInterface_Damageable", ... ]
  * }
  */
 UCLASS()
@@ -25,8 +28,8 @@ class AIBLUEPRINTASSISTANT_API UAIBPContextUtils : public UObject
 
 public:
 	/**
-	 * Gathers variable, component, and parent-class information from whichever
-	 * UBlueprint asset is currently open in an asset editor.
+	 * Gathers variable, component, function, interface, and parent-class information
+	 * from whichever UBlueprint asset is currently open in an asset editor.
 	 *
 	 * @return A populated JSON object on success, or nullptr when no Blueprint
 	 *         editor is open or the active asset is not a UBlueprint.

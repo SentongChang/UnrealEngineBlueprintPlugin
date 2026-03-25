@@ -28,10 +28,11 @@ public class AIBlueprintAssistant : ModuleRules
 
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
-			"EditorWidgets",   // Replaces deprecated EditorStyle (UE 5.1+)
+			"EditorWidgets",      // Replaces deprecated EditorStyle (UE 5.1+)
 			"ToolMenus",
 			"ApplicationCore",
-			"MessageLog",      // FMessageLog category registration
+			"MessageLog",         // FMessageLog category registration
+			"DeveloperSettings",  // UAIBPSettings (UDeveloperSettings subclass)
 		});
 	}
 }
