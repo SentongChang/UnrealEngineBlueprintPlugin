@@ -4,6 +4,7 @@
 
 #include "Engine/Blueprint.h"
 #include "EdGraph/EdGraph.h"
+#include "EdGraph/EdGraphNode.h"
 #include "EdGraphUtilities.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -22,13 +23,15 @@
 // Public API
 // ---------------------------------------------------------------------------
 
-bool FAIBPNodeFactory::ExecuteT3DImport(const FString& T3DCode)
+FAIBPImportResult FAIBPNodeFactory::ExecuteT3DImport(const FString& T3DCode)
 {
+	FAIBPImportResult Result;
+
 	if (T3DCode.IsEmpty())
 	{
 		FMessageLog("AIBlueprintAssistant").Error(
 			LOCTEXT("EmptyT3D", "ExecuteT3DImport: T3D code string is empty."));
-		return false;
+		return Result;
 	}
 
 	// --- Locate the active graph ---
@@ -41,7 +44,7 @@ bool FAIBPNodeFactory::ExecuteT3DImport(const FString& T3DCode)
 			LOCTEXT("NoActiveGraph", "ExecuteT3DImport: No active Blueprint graph found. "
 									"Please open a Blueprint in the editor before generating nodes."));
 		FMessageLog("AIBlueprintAssistant").Open(EMessageSeverity::Error);
-		return false;
+		return Result;
 	}
 
 	const int32 ExistingNodeCount = Graph->Nodes.Num();
@@ -76,7 +79,7 @@ bool FAIBPNodeFactory::ExecuteT3DImport(const FString& T3DCode)
 					"ExecuteT3DImport: FEdGraphUtilities::ImportNodesFromText produced no nodes. "
 					"The T3D code may be malformed or incompatible with this engine version."));
 		FMessageLog("AIBlueprintAssistant").Open(EMessageSeverity::Error);
-		return false;
+		return Result;
 	}
 
 	// --- Offset nodes to avoid overlap ---
@@ -86,12 +89,56 @@ bool FAIBPNodeFactory::ExecuteT3DImport(const FString& T3DCode)
 	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
 	Graph->NotifyGraphChanged();
 
+	Result.bImportSuccess = true;
+
 	UE_LOG(LogTemp, Log,
 		TEXT("AIBPNodeFactory: Successfully imported %d node(s) into graph '%s'."),
 		ImportedNodes.Num(),
 		*Graph->GetName());
 
-	return true;
+	// --- Compile the Blueprint and collect any errors ---
+	FKismetEditorUtilities::CompileBlueprint(Blueprint);
+
+	const bool bHasError = (Blueprint->Status == EBlueprintStatus::BS_Error ||
+	                        Blueprint->Status == EBlueprintStatus::BS_Unknown);
+
+	if (bHasError)
+	{
+		// Walk all event graph pages and collect per-node error messages
+		TArray<FString> ErrorLines;
+		for (UEdGraph* Page : Blueprint->UbergraphPages)
+		{
+			if (!Page) { continue; }
+			for (UEdGraphNode* Node : Page->Nodes)
+			{
+				if (Node && Node->bHasCompilerMessage && !Node->ErrorMsg.IsEmpty())
+				{
+					ErrorLines.Add(FString::Printf(
+						TEXT("[%s] %s"),
+						*Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString(),
+						*Node->ErrorMsg));
+				}
+			}
+		}
+
+		Result.CompileErrors = ErrorLines.Num() > 0
+			? FString::Join(ErrorLines, TEXT("\n"))
+			: TEXT("Blueprint compilation failed (no specific node-level errors reported).");
+
+		UE_LOG(LogTemp, Warning,
+			TEXT("AIBPNodeFactory: Blueprint '%s' has compile errors after import:\n%s"),
+			*Blueprint->GetName(), *Result.CompileErrors);
+	}
+	else
+	{
+		Result.bCompileSuccess = true;
+
+		UE_LOG(LogTemp, Log,
+			TEXT("AIBPNodeFactory: Blueprint '%s' compiled successfully after import."),
+			*Blueprint->GetName());
+	}
+
+	return Result;
 }
 
 // ---------------------------------------------------------------------------

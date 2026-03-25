@@ -5,6 +5,25 @@
 #include "CoreMinimal.h"
 
 /**
+ * Result of a T3D import operation, including post-import Blueprint compilation status.
+ */
+struct FAIBPImportResult
+{
+	/** T3D was parsed and at least one node was imported into the graph. */
+	bool bImportSuccess = false;
+
+	/** Blueprint compiled without errors after import (only meaningful when bImportSuccess is true). */
+	bool bCompileSuccess = false;
+
+	/**
+	 * Human-readable error messages collected from the Blueprint compiler.
+	 * Contains one line per erroneous node: "[NodeTitle] ErrorMsg".
+	 * Empty when bCompileSuccess is true.
+	 */
+	FString CompileErrors;
+};
+
+/**
  * Core generation class that imports a T3D-encoded graph fragment into the
  * currently active Blueprint graph.
  *
@@ -21,13 +40,14 @@ public:
 	/**
 	 * Parses @p T3DCode and inserts the encoded nodes into the active
 	 * Blueprint's EventGraph (or whichever graph is currently focused).
+	 * After import the Blueprint is compiled; compilation errors are reported
+	 * in the returned FAIBPImportResult so the caller can attempt self-repair.
 	 *
 	 * @param T3DCode  Raw T3D text that begins with "Begin Object Class=" and
 	 *                 ends with "End Object".
-	 * @return true on success; false if no Blueprint graph is available or if
-	 *         FEdGraphUtilities::ImportNodesFromText fails.
+	 * @return Result struct describing import and compilation outcome.
 	 */
-	static bool ExecuteT3DImport(const FString& T3DCode);
+	static FAIBPImportResult ExecuteT3DImport(const FString& T3DCode);
 
 private:
 	/** Returns the UEdGraph that should receive the new nodes. */

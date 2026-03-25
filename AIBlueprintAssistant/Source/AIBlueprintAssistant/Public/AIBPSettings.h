@@ -96,6 +96,16 @@ public:
 		meta=(DisplayName="Enable Conversation History (Multi-Turn)"))
 	bool bEnableConversationHistory;
 
+	/**
+	 * Maximum number of automatic self-repair attempts when the imported Blueprint
+	 * has compilation errors. Set to 0 to disable self-repair.
+	 * Each attempt undoes the previous nodes, sends the errors back to the AI,
+	 * and re-imports the corrected T3D.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category="Behavior",
+		meta=(DisplayName="Max Self-Repair Attempts", ClampMin=0, ClampMax=5))
+	int32 MaxRepairAttempts;
+
 	// ---- UDeveloperSettings interface ---------------------------------------
 
 	virtual FName GetCategoryName() const override;

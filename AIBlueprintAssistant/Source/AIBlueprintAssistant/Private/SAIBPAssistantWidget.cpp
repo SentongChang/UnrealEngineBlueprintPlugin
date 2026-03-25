@@ -15,6 +15,8 @@
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/SBoxPanel.h"
 
+#include "Editor.h"   // GEditor->UndoTransaction()
+
 #define LOCTEXT_NAMESPACE "SAIBPAssistantWidget"
 
 void SAIBPAssistantWidget::Construct(const FArguments& InArgs)
@@ -198,87 +200,185 @@ FReply SAIBPAssistantWidget::OnGenerateClicked()
 	// Prevent use-after-free if the tab is closed while the request is in flight
 	TWeakPtr<SAIBPAssistantWidget> WeakThis = SharedThis(this);
 
+	const UAIBPSettings* SettingsForRepair = GetDefault<UAIBPSettings>();
+	const int32 MaxAttempts = (SettingsForRepair && SettingsForRepair->MaxRepairAttempts > 0)
+		? SettingsForRepair->MaxRepairAttempts
+		: 1;  // 0 means "no repair" — still do one import attempt
+
 	UAIBPHttpService::SendRequest(
 		UserReq,
 		ContextJson,
 		ApiKey,
 		ApiUrl,
 		HistoryToSend,
-		[WeakThis, bUseHistory, UserContent](bool bSuccess, const FString& Result)
+		[WeakThis, bUseHistory, UserContent, UserReq, ContextJson, MaxAttempts]
+		(bool bSuccess, const FString& Result)
 		{
 			// Marshal back to GameThread for all UObject / Slate access
-			AsyncTask(ENamedThreads::GameThread, [WeakThis, bSuccess, Result, bUseHistory, UserContent]()
+			AsyncTask(ENamedThreads::GameThread,
+			[WeakThis, bSuccess, Result, bUseHistory, UserContent, UserReq, ContextJson, MaxAttempts]()
 			{
 				TSharedPtr<SAIBPAssistantWidget> PinnedThis = WeakThis.Pin();
-				if (!PinnedThis.IsValid())
-				{
-					return;
-				}
+				if (!PinnedThis.IsValid()) { return; }
 
-				if (!bSuccess)
-				{
-					PinnedThis->AppendLog(FString::Printf(
-						TEXT("[Error] Request failed: %s"), *Result));
-					PinnedThis->SetGenerating(false);
-					return;
-				}
-
-				PinnedThis->AppendLog(TEXT("[Info] AI response received."));
-
-				// ---- Optional preview dialog ----
-				const UAIBPSettings* Cfg = GetDefault<UAIBPSettings>();
-				const bool bPreview = Cfg ? Cfg->bShowPreviewDialog : false;
-				bool bShouldImport = true;
-
-				if (bPreview)
-				{
-					bShouldImport = PinnedThis->ShowPreviewDialog(Result);
-					if (!bShouldImport)
-					{
-						PinnedThis->AppendLog(TEXT("[Info] Import cancelled by user."));
-						PinnedThis->SetGenerating(false);
-						return;
-					}
-				}
-
-				// ---- Import nodes ----
-				PinnedThis->AppendLog(TEXT("[Info] Importing nodes into Blueprint graph..."));
-				const bool bImported = FAIBPNodeFactory::ExecuteT3DImport(Result);
-				if (bImported)
-				{
-					PinnedThis->AppendLog(TEXT("[Success] Blueprint nodes generated successfully."));
-
-					// Record this turn in conversation history (if enabled)
-					if (bUseHistory)
-					{
-						TSharedPtr<FJsonObject> UserMsg = MakeShared<FJsonObject>();
-						UserMsg->SetStringField(TEXT("role"),    TEXT("user"));
-						UserMsg->SetStringField(TEXT("content"), UserContent);
-
-						TSharedPtr<FJsonObject> AssistantMsg = MakeShared<FJsonObject>();
-						AssistantMsg->SetStringField(TEXT("role"),    TEXT("assistant"));
-						AssistantMsg->SetStringField(TEXT("content"), Result);
-
-						PinnedThis->ConversationHistory.Add(UserMsg);
-						PinnedThis->ConversationHistory.Add(AssistantMsg);
-
-						PinnedThis->AppendLog(FString::Printf(
-							TEXT("[Info] Conversation history: %d turn(s) recorded."),
-							PinnedThis->ConversationHistory.Num() / 2));
-					}
-				}
-				else
-				{
-					PinnedThis->AppendLog(
-						TEXT("[Error] Failed to import T3D nodes. See Message Log for details."));
-				}
-
-				PinnedThis->SetGenerating(false);
+				PinnedThis->HandleGenerationResponse(
+					bSuccess, Result,
+					UserReq, ContextJson, UserContent,
+					bUseHistory,
+					/*bIsFirstAttempt=*/true,
+					/*AttemptNum=*/1,
+					MaxAttempts);
 			});
 		}
 	);
 
 	return FReply::Handled();
+}
+
+void SAIBPAssistantWidget::HandleGenerationResponse(
+	bool bSuccess,
+	const FString& T3DResult,
+	const FString& OriginalUserReq,
+	TSharedPtr<FJsonObject> ContextJson,
+	const FString& UserContent,
+	bool bUseHistory,
+	bool bIsFirstAttempt,
+	int32 AttemptNum,
+	int32 MaxAttempts)
+{
+	if (!bSuccess)
+	{
+		AppendLog(FString::Printf(TEXT("[Error] Request failed: %s"), *T3DResult));
+		SetGenerating(false);
+		return;
+	}
+
+	AppendLog(TEXT("[Info] AI response received."));
+
+	// ---- Optional preview dialog (first attempt only) ----
+	if (bIsFirstAttempt)
+	{
+		const UAIBPSettings* Cfg = GetDefault<UAIBPSettings>();
+		if (Cfg && Cfg->bShowPreviewDialog)
+		{
+			if (!ShowPreviewDialog(T3DResult))
+			{
+				AppendLog(TEXT("[Info] Import cancelled by user."));
+				SetGenerating(false);
+				return;
+			}
+		}
+	}
+
+	// ---- Import nodes ----
+	AppendLog(AttemptNum == 1
+		? TEXT("[Info] Importing nodes into Blueprint graph...")
+		: FString::Printf(TEXT("[Info] Re-importing corrected nodes (attempt %d/%d)..."),
+		                  AttemptNum, MaxAttempts));
+
+	const FAIBPImportResult ImportResult = FAIBPNodeFactory::ExecuteT3DImport(T3DResult);
+
+	if (!ImportResult.bImportSuccess)
+	{
+		AppendLog(TEXT("[Error] Failed to import T3D nodes. See Message Log for details."));
+		SetGenerating(false);
+		return;
+	}
+
+	// ---- Compilation succeeded ----
+	if (ImportResult.bCompileSuccess)
+	{
+		AppendLog(TEXT("[Success] Blueprint nodes generated and compiled successfully."));
+
+		if (bUseHistory)
+		{
+			TSharedPtr<FJsonObject> UserMsg = MakeShared<FJsonObject>();
+			UserMsg->SetStringField(TEXT("role"),    TEXT("user"));
+			UserMsg->SetStringField(TEXT("content"), UserContent);
+
+			TSharedPtr<FJsonObject> AssistantMsg = MakeShared<FJsonObject>();
+			AssistantMsg->SetStringField(TEXT("role"),    TEXT("assistant"));
+			AssistantMsg->SetStringField(TEXT("content"), T3DResult);
+
+			ConversationHistory.Add(UserMsg);
+			ConversationHistory.Add(AssistantMsg);
+
+			AppendLog(FString::Printf(
+				TEXT("[Info] Conversation history: %d turn(s) recorded."),
+				ConversationHistory.Num() / 2));
+		}
+
+		SetGenerating(false);
+		return;
+	}
+
+	// ---- Compilation failed ----
+	AppendLog(FString::Printf(
+		TEXT("[Warning] Blueprint has compile errors (attempt %d/%d):\n%s"),
+		AttemptNum, MaxAttempts, *ImportResult.CompileErrors));
+
+	// If self-repair is disabled or we've exhausted attempts, keep the nodes as-is
+	const UAIBPSettings* Cfg = GetDefault<UAIBPSettings>();
+	const bool bRepairEnabled = Cfg && Cfg->MaxRepairAttempts > 0;
+
+	if (!bRepairEnabled || AttemptNum >= MaxAttempts)
+	{
+		AppendLog(bRepairEnabled
+			? TEXT("[Warning] Max self-repair attempts reached. Blueprint may still have errors.")
+			: TEXT("[Warning] Self-repair is disabled. Blueprint may have errors."));
+		SetGenerating(false);
+		return;
+	}
+
+	// ---- Undo failed import and request repair from AI ----
+	AppendLog(FString::Printf(
+		TEXT("[Info] Undoing import and requesting self-repair from AI (attempt %d/%d)..."),
+		AttemptNum + 1, MaxAttempts));
+
+	if (GEditor)
+	{
+		GEditor->UndoTransaction();
+	}
+
+	// Build repair message: include original requirement + compiler errors
+	const FString RepairReq = FString::Printf(
+		TEXT("The Blueprint nodes you generated had compilation errors. Please fix them.\n\n"
+		     "Original requirement:\n%s\n\n"
+		     "Compilation errors:\n%s\n\n"
+		     "Generate corrected T3D that resolves all errors above."),
+		*OriginalUserReq,
+		*ImportResult.CompileErrors);
+
+	// Send repair request — do NOT include conversation history to keep context clean
+	TWeakPtr<SAIBPAssistantWidget> WeakThis = SharedThis(this);
+	const int32 NextAttempt = AttemptNum + 1;
+
+	UAIBPHttpService::SendRequest(
+		RepairReq,
+		ContextJson,
+		Cfg ? Cfg->ApiKey : FString(),
+		Cfg ? Cfg->ApiUrl : FString(),
+		TArray<TSharedPtr<FJsonObject>>(),   // no history for repair requests
+		[WeakThis, OriginalUserReq, ContextJson, UserContent, bUseHistory, NextAttempt, MaxAttempts]
+		(bool bSuc, const FString& RepairResult)
+		{
+			AsyncTask(ENamedThreads::GameThread,
+			[WeakThis, bSuc, RepairResult, OriginalUserReq, ContextJson,
+			 UserContent, bUseHistory, NextAttempt, MaxAttempts]()
+			{
+				TSharedPtr<SAIBPAssistantWidget> PinnedThis = WeakThis.Pin();
+				if (!PinnedThis.IsValid()) { return; }
+
+				PinnedThis->HandleGenerationResponse(
+					bSuc, RepairResult,
+					OriginalUserReq, ContextJson, UserContent,
+					bUseHistory,
+					/*bIsFirstAttempt=*/false,
+					NextAttempt,
+					MaxAttempts);
+			});
+		}
+	);
 }
 
 FReply SAIBPAssistantWidget::OnNewConversationClicked()

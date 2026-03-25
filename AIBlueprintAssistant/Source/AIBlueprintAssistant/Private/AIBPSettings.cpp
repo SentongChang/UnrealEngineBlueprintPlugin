@@ -19,6 +19,7 @@ UAIBPSettings::UAIBPSettings()
 	// Behaviour defaults.
 	bShowPreviewDialog        = true;   // Safer: user reviews T3D before import.
 	bEnableConversationHistory = false;  // Off by default to keep requests simple.
+	MaxRepairAttempts         = 3;      // Up to 3 auto-repair cycles on compile error.
 
 	// Target engine version defaults to what this binary was compiled against.
 	// Users can override in Project Settings to cross-target a different version.

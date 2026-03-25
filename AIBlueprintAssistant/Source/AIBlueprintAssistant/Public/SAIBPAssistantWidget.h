@@ -51,6 +51,32 @@ private:
 	/** Returns label text for the model info bar (reads UAIBPSettings). */
 	FText GetModelInfoText() const;
 
+	/**
+	 * Handles an AI response for both initial generation and self-repair retries.
+	 * On compile error, undoes the import and re-sends the errors to the AI
+	 * (up to MaxRepairAttempts times).
+	 *
+	 * @param bSuccess         Whether the HTTP request succeeded.
+	 * @param T3DResult        The T3D code (or error message on failure).
+	 * @param OriginalUserReq  The user's original requirement text (for repair context).
+	 * @param ContextJson      Blueprint context JSON forwarded to repair requests.
+	 * @param UserContent      Full user+context string used to record conversation history.
+	 * @param bUseHistory      Whether to record a successful turn in ConversationHistory.
+	 * @param bIsFirstAttempt  Show the T3D preview dialog only on the first attempt.
+	 * @param AttemptNum       Current attempt index (1-based).
+	 * @param MaxAttempts      Total allowed attempts (0 = no repair, just import once).
+	 */
+	void HandleGenerationResponse(
+		bool bSuccess,
+		const FString& T3DResult,
+		const FString& OriginalUserReq,
+		TSharedPtr<FJsonObject> ContextJson,
+		const FString& UserContent,
+		bool bUseHistory,
+		bool bIsFirstAttempt,
+		int32 AttemptNum,
+		int32 MaxAttempts);
+
 	// --- Slate widget references ---
 
 	/** Multi-line user requirement text editor */
