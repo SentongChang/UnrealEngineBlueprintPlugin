@@ -25,36 +25,9 @@
 
 TSharedPtr<FJsonObject> UAIBPContextUtils::GetActiveBlueprintData()
 {
-	if (!GEditor)
-	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("AIBPContextUtils: GEditor is null — cannot retrieve blueprint context."));
-		return nullptr;
-	}
-
-	UAssetEditorSubsystem* AssetEditorSubsystem =
-		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
-	if (!AssetEditorSubsystem)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("AIBPContextUtils: UAssetEditorSubsystem not available."));
-		return nullptr;
-	}
-
-	// Find the first open Blueprint asset
-	UBlueprint* ActiveBlueprint = nullptr;
-	for (UObject* Asset : AssetEditorSubsystem->GetAllEditedAssets())
-	{
-		if (UBlueprint* BP = Cast<UBlueprint>(Asset))
-		{
-			ActiveBlueprint = BP;
-			break;
-		}
-	}
-
+	UBlueprint* ActiveBlueprint = FindActiveBlueprint();
 	if (!ActiveBlueprint)
 	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("AIBPContextUtils: No Blueprint asset is currently open in an editor."));
 		return nullptr;
 	}
 
@@ -63,28 +36,7 @@ TSharedPtr<FJsonObject> UAIBPContextUtils::GetActiveBlueprintData()
 
 TSharedPtr<FJsonObject> UAIBPContextUtils::GetActiveBlueprintGraphData()
 {
-	if (!GEditor)
-	{
-		return nullptr;
-	}
-
-	UAssetEditorSubsystem* AssetEditorSubsystem =
-		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
-	if (!AssetEditorSubsystem)
-	{
-		return nullptr;
-	}
-
-	UBlueprint* ActiveBlueprint = nullptr;
-	for (UObject* Asset : AssetEditorSubsystem->GetAllEditedAssets())
-	{
-		if (UBlueprint* BP = Cast<UBlueprint>(Asset))
-		{
-			ActiveBlueprint = BP;
-			break;
-		}
-	}
-
+	UBlueprint* ActiveBlueprint = FindActiveBlueprint();
 	if (!ActiveBlueprint)
 	{
 		return nullptr;
@@ -142,6 +94,36 @@ TSharedPtr<FJsonObject> UAIBPContextUtils::GetActiveBlueprintGraphData()
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
+
+UBlueprint* UAIBPContextUtils::FindActiveBlueprint()
+{
+	if (!GEditor)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("AIBPContextUtils: GEditor is null — cannot retrieve blueprint context."));
+		return nullptr;
+	}
+
+	UAssetEditorSubsystem* AssetEditorSubsystem =
+		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+	if (!AssetEditorSubsystem)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("AIBPContextUtils: UAssetEditorSubsystem not available."));
+		return nullptr;
+	}
+
+	for (UObject* Asset : AssetEditorSubsystem->GetAllEditedAssets())
+	{
+		if (UBlueprint* BP = Cast<UBlueprint>(Asset))
+		{
+			return BP;
+		}
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("AIBPContextUtils: No Blueprint asset is currently open in an editor."));
+	return nullptr;
+}
 
 TSharedPtr<FJsonObject> UAIBPContextUtils::BuildJsonFromBlueprint(UBlueprint* Blueprint)
 {

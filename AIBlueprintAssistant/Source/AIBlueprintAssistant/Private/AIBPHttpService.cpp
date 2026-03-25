@@ -155,25 +155,17 @@ void UAIBPHttpService::SendAnalysisRequest(
 	const FString& ApiUrl,
 	TFunction<void(bool bSuccess, const FString& Result)> OnComplete)
 {
-	const UAIBPSettings* Settings = GetDefault<UAIBPSettings>();
+	FString Url, Key, Model;
+	int32 Tokens;
+	float Temp;
+	ResolveSettings(ApiUrl, ApiKey, Url, Key, Model, Tokens, Temp);
 
-	const FString EffectiveUrl = ApiUrl.IsEmpty()
-		? (Settings ? Settings->ApiUrl : FString())
-		: ApiUrl;
-	const FString EffectiveKey = ApiKey.IsEmpty()
-		? (Settings ? Settings->ApiKey : FString())
-		: ApiKey;
-	const FString EffectiveModel  = Settings ? Settings->ModelName  : TEXT("gpt-4o");
-	const int32   EffectiveTokens = Settings ? Settings->MaxTokens  : 2048;
-	const float   EffectiveTemp   = Settings ? Settings->Temperature : 0.2f;
-
-	if (EffectiveUrl.IsEmpty())
+	if (Url.IsEmpty())
 	{
 		OnComplete(false, TEXT("API URL is empty. Configure it in Project Settings > Plugins > AI Blueprint Assistant."));
 		return;
 	}
 
-	// Serialise ContextJson and GraphJson into strings for the user message
 	auto JsonToString = [](TSharedPtr<FJsonObject> Json) -> FString
 	{
 		if (!Json.IsValid()) { return TEXT("{}"); }
@@ -191,24 +183,12 @@ void UAIBPHttpService::SendAnalysisRequest(
 
 	const FString RequestBody = BuildRequestBody(
 		GetAnalysisSystemPrompt(),
-		TArray<TSharedPtr<FJsonObject>>(),  // no conversation history for analysis
+		TArray<TSharedPtr<FJsonObject>>(),
 		UserContent,
-		EffectiveModel, EffectiveTokens, EffectiveTemp);
+		Model, Tokens, Temp);
 
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request =
-		FHttpModule::Get().CreateRequest();
-
-	Request->SetVerb(TEXT("POST"));
-	Request->SetURL(EffectiveUrl);
-	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
-
-	if (!EffectiveKey.IsEmpty())
-	{
-		Request->SetHeader(TEXT("Authorization"),
-			FString::Printf(TEXT("Bearer %s"), *EffectiveKey));
-	}
-
-	Request->SetContentAsString(RequestBody);
+		CreateAndConfigureRequest(Url, Key, RequestBody);
 
 	Request->OnProcessRequestComplete().BindLambda(
 		[OnComplete](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
@@ -228,46 +208,14 @@ void UAIBPHttpService::SendAnalysisRequest(
 				return;
 			}
 
-			// Extract the text content from choices[0].message.content
-			TSharedPtr<FJsonObject> ResponseJson;
-			TSharedRef<TJsonReader<>> Reader =
-				TJsonReaderFactory<>::Create(Response->GetContentAsString());
-			if (!FJsonSerializer::Deserialize(Reader, ResponseJson) || !ResponseJson.IsValid())
-			{
-				OnComplete(false, TEXT("Failed to parse API response JSON."));
-				return;
-			}
-
-			const TArray<TSharedPtr<FJsonValue>>* Choices = nullptr;
-			if (!ResponseJson->TryGetArrayField(TEXT("choices"), Choices)
-				|| !Choices || Choices->IsEmpty())
-			{
-				OnComplete(false, TEXT("'choices' array missing or empty in API response."));
-				return;
-			}
-
-			const TSharedPtr<FJsonObject> FirstChoice = (*Choices)[0]->AsObject();
-			if (!FirstChoice.IsValid())
-			{
-				OnComplete(false, TEXT("Could not read first choice from API response."));
-				return;
-			}
-
-			const TSharedPtr<FJsonObject>* MessageObj = nullptr;
-			if (!FirstChoice->TryGetObjectField(TEXT("message"), MessageObj) || !MessageObj)
-			{
-				OnComplete(false, TEXT("'message' field missing in API response choice."));
-				return;
-			}
-
 			FString Content;
-			if (!(*MessageObj)->TryGetStringField(TEXT("content"), Content))
+			if (!UAIBPHttpService::ExtractContentFromResponse(Response->GetContentAsString(), Content))
 			{
-				OnComplete(false, TEXT("'content' field missing in API response message."));
+				OnComplete(false, Content);
 				return;
 			}
 
-			OnComplete(true, Content.TrimStartAndEnd());
+			OnComplete(true, Content);
 		});
 
 	Request->ProcessRequest();
@@ -281,29 +229,22 @@ void UAIBPHttpService::SendRequest(
 	const TArray<TSharedPtr<FJsonObject>>& ConversationHistory,
 	TFunction<void(bool bSuccess, const FString& Result)> OnComplete)
 {
-	// Resolve effective settings: prefer explicit args, fall back to UAIBPSettings.
-	const UAIBPSettings* Settings = GetDefault<UAIBPSettings>();
+	FString Url, Key, Model;
+	int32 Tokens;
+	float Temp;
+	ResolveSettings(ApiUrl, ApiKey, Url, Key, Model, Tokens, Temp);
 
-	const FString EffectiveUrl = ApiUrl.IsEmpty()
-		? (Settings ? Settings->ApiUrl : FString())
-		: ApiUrl;
-	const FString EffectiveKey = ApiKey.IsEmpty()
-		? (Settings ? Settings->ApiKey : FString())
-		: ApiKey;
-	const FString EffectiveModel = Settings ? Settings->ModelName : TEXT("gpt-4o");
-	const int32   EffectiveTokens = Settings ? Settings->MaxTokens : 2048;
-	const float   EffectiveTemp   = Settings ? Settings->Temperature : 0.2f;
-	const FString SystemPrompt    = (Settings && !Settings->CustomSystemPrompt.IsEmpty())
+	const UAIBPSettings* Settings = GetDefault<UAIBPSettings>();
+	const FString SystemPrompt = (Settings && !Settings->CustomSystemPrompt.IsEmpty())
 		? Settings->CustomSystemPrompt
 		: GetDefaultSystemPrompt();
 
-	if (EffectiveUrl.IsEmpty())
+	if (Url.IsEmpty())
 	{
 		OnComplete(false, TEXT("API URL is empty. Configure it in Project Settings > Plugins > AI Blueprint Assistant."));
 		return;
 	}
 
-	// Build user message content: requirement + context JSON
 	FString ContextStr;
 	if (ContextJson.IsValid())
 	{
@@ -319,27 +260,15 @@ void UAIBPHttpService::SendRequest(
 
 	const FString RequestBody = BuildRequestBody(
 		SystemPrompt, ConversationHistory, UserContent,
-		EffectiveModel, EffectiveTokens, EffectiveTemp);
+		Model, Tokens, Temp);
 
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request =
-		FHttpModule::Get().CreateRequest();
-
-	Request->SetVerb(TEXT("POST"));
-	Request->SetURL(EffectiveUrl);
-	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
-
-	if (!EffectiveKey.IsEmpty())
-	{
-		Request->SetHeader(TEXT("Authorization"),
-			FString::Printf(TEXT("Bearer %s"), *EffectiveKey));
-	}
-
-	Request->SetContentAsString(RequestBody);
+		CreateAndConfigureRequest(Url, Key, RequestBody);
 
 	Request->OnProcessRequestComplete().BindLambda(
-		[OnComplete](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnectedSuccessfully)
+		[OnComplete](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
 		{
-			if (!bConnectedSuccessfully || !Response.IsValid())
+			if (!bConnected || !Response.IsValid())
 			{
 				OnComplete(false, TEXT("HTTP request failed: could not connect to the server."));
 				return;
@@ -348,14 +277,13 @@ void UAIBPHttpService::SendRequest(
 			const int32 StatusCode = Response->GetResponseCode();
 			if (StatusCode < 200 || StatusCode >= 300)
 			{
-				const FString ErrorMsg = FString::Printf(
+				OnComplete(false, FString::Printf(
 					TEXT("HTTP request failed with status %d: %s"),
-					StatusCode, *Response->GetContentAsString());
-				OnComplete(false, ErrorMsg);
+					StatusCode, *Response->GetContentAsString()));
 				return;
 			}
 
-			const FString T3DCode = ExtractT3DFromResponse(Response->GetContentAsString());
+			const FString T3DCode = UAIBPHttpService::ExtractT3DFromResponse(Response->GetContentAsString());
 			if (T3DCode.IsEmpty())
 			{
 				OnComplete(false,
@@ -374,6 +302,80 @@ void UAIBPHttpService::SendRequest(
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
+
+void UAIBPHttpService::ResolveSettings(
+	const FString& InUrl, const FString& InKey,
+	FString& OutUrl, FString& OutKey,
+	FString& OutModel, int32& OutTokens, float& OutTemp)
+{
+	const UAIBPSettings* Settings = GetDefault<UAIBPSettings>();
+	OutUrl    = InUrl.IsEmpty()  ? (Settings ? Settings->ApiUrl      : FString()) : InUrl;
+	OutKey    = InKey.IsEmpty()  ? (Settings ? Settings->ApiKey      : FString()) : InKey;
+	OutModel  = Settings ? Settings->ModelName   : TEXT("gpt-4o");
+	OutTokens = Settings ? Settings->MaxTokens   : 2048;
+	OutTemp   = Settings ? Settings->Temperature : 0.2f;
+}
+
+TSharedRef<IHttpRequest, ESPMode::ThreadSafe> UAIBPHttpService::CreateAndConfigureRequest(
+	const FString& Url, const FString& Key, const FString& Body)
+{
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request =
+		FHttpModule::Get().CreateRequest();
+	Request->SetVerb(TEXT("POST"));
+	Request->SetURL(Url);
+	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+	if (!Key.IsEmpty())
+	{
+		Request->SetHeader(TEXT("Authorization"),
+			FString::Printf(TEXT("Bearer %s"), *Key));
+	}
+	Request->SetContentAsString(Body);
+	return Request;
+}
+
+bool UAIBPHttpService::ExtractContentFromResponse(
+	const FString& ResponseBody, FString& OutContent)
+{
+	TSharedPtr<FJsonObject> ResponseJson;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseBody);
+	if (!FJsonSerializer::Deserialize(Reader, ResponseJson) || !ResponseJson.IsValid())
+	{
+		OutContent = TEXT("Failed to parse API response JSON.");
+		return false;
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* Choices = nullptr;
+	if (!ResponseJson->TryGetArrayField(TEXT("choices"), Choices)
+		|| !Choices || Choices->IsEmpty())
+	{
+		OutContent = TEXT("'choices' array missing or empty in API response.");
+		return false;
+	}
+
+	const TSharedPtr<FJsonObject> FirstChoice = (*Choices)[0]->AsObject();
+	if (!FirstChoice.IsValid())
+	{
+		OutContent = TEXT("Could not read first choice from API response.");
+		return false;
+	}
+
+	const TSharedPtr<FJsonObject>* MessageObj = nullptr;
+	if (!FirstChoice->TryGetObjectField(TEXT("message"), MessageObj) || !MessageObj)
+	{
+		OutContent = TEXT("'message' field missing in API response choice.");
+		return false;
+	}
+
+	FString Content;
+	if (!(*MessageObj)->TryGetStringField(TEXT("content"), Content))
+	{
+		OutContent = TEXT("'content' field missing in API response message.");
+		return false;
+	}
+
+	OutContent = Content.TrimStartAndEnd();
+	return true;
+}
 
 FString UAIBPHttpService::BuildRequestBody(
 	const FString& SystemPrompt,
@@ -424,45 +426,15 @@ FString UAIBPHttpService::BuildRequestBody(
 
 FString UAIBPHttpService::ExtractT3DFromResponse(const FString& ResponseBody)
 {
-	TSharedPtr<FJsonObject> ResponseJson;
-	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseBody);
-	if (!FJsonSerializer::Deserialize(Reader, ResponseJson) || !ResponseJson.IsValid())
+	FString Content;
+	if (!ExtractContentFromResponse(ResponseBody, Content))
 	{
 		UE_LOG(LogTemp, Warning,
-			TEXT("AIBPHttpService: Failed to parse API response JSON. Body: %s"),
-			*ResponseBody.Left(512));
-		return FString();
-	}
-
-	// Navigate choices[0].message.content
-	const TArray<TSharedPtr<FJsonValue>>* Choices = nullptr;
-	if (!ResponseJson->TryGetArrayField(TEXT("choices"), Choices) || !Choices || Choices->IsEmpty())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("AIBPHttpService: 'choices' array missing or empty in response."));
-		return FString();
-	}
-
-	const TSharedPtr<FJsonObject>* FirstChoice =
-		(*Choices)[0]->AsObjectChecked() ? &(*Choices)[0]->AsObject() : nullptr;
-	if (!FirstChoice || !(*FirstChoice).IsValid())
-	{
-		return FString();
-	}
-
-	const TSharedPtr<FJsonObject>* MessageObj = nullptr;
-	if (!(*FirstChoice)->TryGetObjectField(TEXT("message"), MessageObj) || !MessageObj)
-	{
-		return FString();
-	}
-
-	FString Content;
-	if (!(*MessageObj)->TryGetStringField(TEXT("content"), Content))
-	{
+			TEXT("AIBPHttpService: %s  Body: %s"), *Content, *ResponseBody.Left(512));
 		return FString();
 	}
 
 	// Strip accidental markdown fences the model may have added
-	Content = Content.TrimStartAndEnd();
 	if (Content.StartsWith(TEXT("```")))
 	{
 		int32 NewlineIdx = INDEX_NONE;

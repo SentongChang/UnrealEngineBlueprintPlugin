@@ -75,6 +75,30 @@ public:
 
 private:
 	/**
+	 * Resolves effective URL, API key, model, tokens, and temperature.
+	 * Explicit args take precedence; falls back to UAIBPSettings defaults.
+	 */
+	static void ResolveSettings(
+		const FString& InUrl, const FString& InKey,
+		FString& OutUrl, FString& OutKey,
+		FString& OutModel, int32& OutTokens, float& OutTemp);
+
+	/**
+	 * Creates an IHttpRequest pre-configured with POST verb, URL, Content-Type,
+	 * optional Bearer auth header, and the serialised request body.
+	 */
+	static TSharedRef<IHttpRequest, ESPMode::ThreadSafe> CreateAndConfigureRequest(
+		const FString& Url, const FString& Key, const FString& Body);
+
+	/**
+	 * Parses the raw API response and extracts choices[0].message.content.
+	 * @param OutContent  On success: the trimmed content string.
+	 *                    On failure: a human-readable error description.
+	 * @return true on success, false on any parse error.
+	 */
+	static bool ExtractContentFromResponse(const FString& ResponseBody, FString& OutContent);
+
+	/**
 	 * Builds the JSON request body following the OpenAI Chat Completions spec.
 	 *
 	 * @param SystemPrompt        System message content (built-in default or custom).
@@ -93,8 +117,9 @@ private:
 		float Temperature);
 
 	/**
-	 * Parses the raw API response and extracts the first T3D code block.
-	 * @return Extracted T3D text, or empty string on failure.
+	 * Calls ExtractContentFromResponse, then strips markdown fences and
+	 * validates that a T3D "Begin Object Class=" block is present.
+	 * @return Cleaned T3D text, or empty string on failure.
 	 */
 	static FString ExtractT3DFromResponse(const FString& ResponseBody);
 };

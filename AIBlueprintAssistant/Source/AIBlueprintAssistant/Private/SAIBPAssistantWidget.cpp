@@ -214,9 +214,8 @@ FReply SAIBPAssistantWidget::OnGenerateClicked()
 	// Prevent use-after-free if the tab is closed while the request is in flight
 	TWeakPtr<SAIBPAssistantWidget> WeakThis = SharedThis(this);
 
-	const UAIBPSettings* SettingsForRepair = GetDefault<UAIBPSettings>();
-	const int32 MaxAttempts = (SettingsForRepair && SettingsForRepair->MaxRepairAttempts > 0)
-		? SettingsForRepair->MaxRepairAttempts
+	const int32 MaxAttempts = (Settings && Settings->MaxRepairAttempts > 0)
+		? Settings->MaxRepairAttempts
 		: 1;  // 0 means "no repair" — still do one import attempt
 
 	UAIBPHttpService::SendRequest(

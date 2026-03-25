@@ -55,6 +55,12 @@ public:
 	static TSharedPtr<FJsonObject> GetActiveBlueprintGraphData();
 
 private:
+	/**
+	 * Returns the first UBlueprint currently open in an asset editor, or nullptr.
+	 * Shared by GetActiveBlueprintData() and GetActiveBlueprintGraphData().
+	 */
+	static class UBlueprint* FindActiveBlueprint();
+
 	/** Builds a complete JSON snapshot from a UBlueprint asset. */
 	static TSharedPtr<FJsonObject> BuildJsonFromBlueprint(class UBlueprint* Blueprint);
 
