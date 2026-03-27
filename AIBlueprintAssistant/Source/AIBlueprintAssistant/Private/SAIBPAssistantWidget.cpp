@@ -22,6 +22,12 @@
 
 void SAIBPAssistantWidget::Construct(const FArguments& InArgs)
 {
+	// Read current settings to pre-fill inline fields
+	const UAIBPSettings* InitSettings = GetDefault<UAIBPSettings>();
+	const FText InitUrl   = FText::FromString(InitSettings ? InitSettings->ApiUrl   : FString());
+	const FText InitKey   = FText::FromString(InitSettings ? InitSettings->ApiKey   : FString());
+	const FText InitModel = FText::FromString(InitSettings ? InitSettings->ModelName : FString());
+
 	ChildSlot
 	[
 		SNew(SBorder)
@@ -61,18 +67,112 @@ void SAIBPAssistantWidget::Construct(const FArguments& InArgs)
 				]
 			]
 
-			// ---- Settings hint ----
+			// ---- Inline Settings Form ----
 			+ SVerticalBox::Slot()
 			.AutoHeight()
 			.Padding(0.f, 0.f, 0.f, 6.f)
 			[
-				SNew(STextBlock)
-				.Text(LOCTEXT("SettingsHint",
-					"Configure API URL, key, model, and prompt in:\n"
-					"Edit \u2192 Project Settings \u2192 Plugins \u2192 AI Blueprint Assistant"))
-				.Font(FAppStyle::GetFontStyle("SmallFont"))
-				.ColorAndOpacity(FSlateColor(FLinearColor(0.55f, 0.55f, 0.55f)))
-				.AutoWrapText(true)
+				SNew(SBorder)
+				.BorderImage(FAppStyle::GetBrush("ToolPanel.DarkGroupBorder"))
+				.Padding(FMargin(6.f, 5.f))
+				[
+					SNew(SVerticalBox)
+
+					// API URL row
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(0.f, 0.f, 0.f, 3.f)
+					[
+						SNew(SHorizontalBox)
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.VAlign(VAlign_Center)
+						[
+							SNew(SBox)
+							.MinDesiredWidth(58.f)
+							[
+								SNew(STextBlock)
+								.Text(LOCTEXT("LabelApiUrl", "API URL"))
+								.Font(FAppStyle::GetFontStyle("SmallFont"))
+							]
+						]
+						+ SHorizontalBox::Slot()
+						.FillWidth(1.f)
+						[
+							SAssignNew(ApiUrlInput, SEditableTextBox)
+							.Text(InitUrl)
+							.HintText(LOCTEXT("HintApiUrl",
+								"https://api.openai.com/v1/chat/completions"))
+							.Font(FAppStyle::GetFontStyle("SmallFont"))
+						]
+					]
+
+					// API Key row
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(0.f, 0.f, 0.f, 3.f)
+					[
+						SNew(SHorizontalBox)
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.VAlign(VAlign_Center)
+						[
+							SNew(SBox)
+							.MinDesiredWidth(58.f)
+							[
+								SNew(STextBlock)
+								.Text(LOCTEXT("LabelApiKey", "API Key"))
+								.Font(FAppStyle::GetFontStyle("SmallFont"))
+							]
+						]
+						+ SHorizontalBox::Slot()
+						.FillWidth(1.f)
+						[
+							SAssignNew(ApiKeyInput, SEditableTextBox)
+							.Text(InitKey)
+							.HintText(LOCTEXT("HintApiKey", "sk-..."))
+							.IsPassword(true)
+							.Font(FAppStyle::GetFontStyle("SmallFont"))
+						]
+					]
+
+					// Model + Save button row
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					[
+						SNew(SHorizontalBox)
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.VAlign(VAlign_Center)
+						[
+							SNew(SBox)
+							.MinDesiredWidth(58.f)
+							[
+								SNew(STextBlock)
+								.Text(LOCTEXT("LabelModel", "Model"))
+								.Font(FAppStyle::GetFontStyle("SmallFont"))
+							]
+						]
+						+ SHorizontalBox::Slot()
+						.FillWidth(1.f)
+						[
+							SAssignNew(ModelInput, SEditableTextBox)
+							.Text(InitModel)
+							.HintText(LOCTEXT("HintModel", "gpt-4o"))
+							.Font(FAppStyle::GetFontStyle("SmallFont"))
+						]
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.Padding(6.f, 0.f, 0.f, 0.f)
+						[
+							SNew(SButton)
+							.Text(LOCTEXT("SaveSettingsBtn", "Save"))
+							.ToolTipText(LOCTEXT("SaveSettingsTooltip",
+								"Save API URL, API Key, and Model to project settings."))
+							.OnClicked(this, &SAIBPAssistantWidget::OnSaveSettingsClicked)
+						]
+					]
+				]
 			]
 
 			// ---- Requirement Input ----
@@ -212,7 +312,7 @@ FReply SAIBPAssistantWidget::OnGenerateClicked()
 		ContextStr.IsEmpty() ? TEXT("{}") : *ContextStr);
 
 	// Prevent use-after-free if the tab is closed while the request is in flight
-	TWeakPtr<SAIBPAssistantWidget> WeakThis = SharedThis(this);
+	TWeakPtr<SAIBPAssistantWidget> WeakSelf = SharedThis(this);
 
 	const int32 MaxAttempts = (Settings && Settings->MaxRepairAttempts > 0)
 		? Settings->MaxRepairAttempts
@@ -224,14 +324,14 @@ FReply SAIBPAssistantWidget::OnGenerateClicked()
 		ApiKey,
 		ApiUrl,
 		HistoryToSend,
-		[WeakThis, bUseHistory, UserContent, UserReq, ContextJson, MaxAttempts]
+		[WeakSelf, bUseHistory, UserContent, UserReq, ContextJson, MaxAttempts]
 		(bool bSuccess, const FString& Result)
 		{
 			// Marshal back to GameThread for all UObject / Slate access
 			AsyncTask(ENamedThreads::GameThread,
-			[WeakThis, bSuccess, Result, bUseHistory, UserContent, UserReq, ContextJson, MaxAttempts]()
+			[WeakSelf, bSuccess, Result, bUseHistory, UserContent, UserReq, ContextJson, MaxAttempts]()
 			{
-				TSharedPtr<SAIBPAssistantWidget> PinnedThis = WeakThis.Pin();
+				TSharedPtr<SAIBPAssistantWidget> PinnedThis = WeakSelf.Pin();
 				if (!PinnedThis.IsValid()) { return; }
 
 				PinnedThis->HandleGenerationResponse(
@@ -363,7 +463,7 @@ void SAIBPAssistantWidget::HandleGenerationResponse(
 		*ImportResult.CompileErrors);
 
 	// Send repair request — do NOT include conversation history to keep context clean
-	TWeakPtr<SAIBPAssistantWidget> WeakThis = SharedThis(this);
+	TWeakPtr<SAIBPAssistantWidget> WeakSelf = SharedThis(this);
 	const int32 NextAttempt = AttemptNum + 1;
 
 	UAIBPHttpService::SendRequest(
@@ -372,14 +472,14 @@ void SAIBPAssistantWidget::HandleGenerationResponse(
 		Cfg ? Cfg->ApiKey : FString(),
 		Cfg ? Cfg->ApiUrl : FString(),
 		TArray<TSharedPtr<FJsonObject>>(),   // no history for repair requests
-		[WeakThis, OriginalUserReq, ContextJson, UserContent, bUseHistory, NextAttempt, MaxAttempts]
+		[WeakSelf, OriginalUserReq, ContextJson, UserContent, bUseHistory, NextAttempt, MaxAttempts]
 		(bool bSuc, const FString& RepairResult)
 		{
 			AsyncTask(ENamedThreads::GameThread,
-			[WeakThis, bSuc, RepairResult, OriginalUserReq, ContextJson,
+			[WeakSelf, bSuc, RepairResult, OriginalUserReq, ContextJson,
 			 UserContent, bUseHistory, NextAttempt, MaxAttempts]()
 			{
-				TSharedPtr<SAIBPAssistantWidget> PinnedThis = WeakThis.Pin();
+				TSharedPtr<SAIBPAssistantWidget> PinnedThis = WeakSelf.Pin();
 				if (!PinnedThis.IsValid()) { return; }
 
 				PinnedThis->HandleGenerationResponse(
@@ -435,18 +535,18 @@ FReply SAIBPAssistantWidget::OnAnalyzeClicked()
 
 	AppendLog(TEXT("[Analyze] Sending to AI..."));
 
-	TWeakPtr<SAIBPAssistantWidget> WeakThis = SharedThis(this);
+	TWeakPtr<SAIBPAssistantWidget> WeakSelf = SharedThis(this);
 
 	UAIBPHttpService::SendAnalysisRequest(
 		ContextJson,
 		GraphJson,
 		ApiKey,
 		ApiUrl,
-		[WeakThis](bool bSuccess, const FString& Result)
+		[WeakSelf](bool bSuccess, const FString& Result)
 		{
-			AsyncTask(ENamedThreads::GameThread, [WeakThis, bSuccess, Result]()
+			AsyncTask(ENamedThreads::GameThread, [WeakSelf, bSuccess, Result]()
 			{
-				TSharedPtr<SAIBPAssistantWidget> PinnedThis = WeakThis.Pin();
+				TSharedPtr<SAIBPAssistantWidget> PinnedThis = WeakSelf.Pin();
 				if (!PinnedThis.IsValid()) { return; }
 
 				if (!bSuccess)
@@ -491,6 +591,29 @@ FReply SAIBPAssistantWidget::OnNewConversationClicked()
 	AppendLog(FString::Printf(
 		TEXT("[Info] Conversation history cleared (%d turn(s) removed). Ready for a new session."),
 		PreviousTurns));
+	return FReply::Handled();
+}
+
+FReply SAIBPAssistantWidget::OnSaveSettingsClicked()
+{
+	UAIBPSettings* Settings = GetMutableDefault<UAIBPSettings>();
+	if (!Settings) { return FReply::Handled(); }
+
+	if (ApiUrlInput.IsValid())
+	{
+		Settings->ApiUrl = ApiUrlInput->GetText().ToString();
+	}
+	if (ApiKeyInput.IsValid())
+	{
+		Settings->ApiKey = ApiKeyInput->GetText().ToString();
+	}
+	if (ModelInput.IsValid())
+	{
+		Settings->ModelName = ModelInput->GetText().ToString();
+	}
+
+	Settings->SaveConfig();
+	AppendLog(TEXT("[Info] Settings saved."));
 	return FReply::Handled();
 }
 

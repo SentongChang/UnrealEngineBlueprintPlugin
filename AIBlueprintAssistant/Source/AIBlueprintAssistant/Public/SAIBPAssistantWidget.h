@@ -42,6 +42,9 @@ private:
 	/** Fired when the user clicks "New Conversation" */
 	FReply OnNewConversationClicked();
 
+	/** Saves the inline API URL / Key / Model fields back to UAIBPSettings. */
+	FReply OnSaveSettingsClicked();
+
 	/** Shows a modal T3D preview window; returns true if the user confirmed import. */
 	bool ShowPreviewDialog(const FString& T3DCode);
 
@@ -81,6 +84,15 @@ private:
 		int32 MaxAttempts);
 
 	// --- Slate widget references ---
+
+	/** Inline settings: API URL */
+	TSharedPtr<SEditableTextBox> ApiUrlInput;
+
+	/** Inline settings: API Key (password-masked) */
+	TSharedPtr<SEditableTextBox> ApiKeyInput;
+
+	/** Inline settings: Model name */
+	TSharedPtr<SEditableTextBox> ModelInput;
 
 	/** Multi-line user requirement text editor */
 	TSharedPtr<SMultiLineEditableTextBox> RequirementInput;
