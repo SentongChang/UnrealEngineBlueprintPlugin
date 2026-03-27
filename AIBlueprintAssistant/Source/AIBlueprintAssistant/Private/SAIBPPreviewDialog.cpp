@@ -6,7 +6,7 @@
 #include "Styling/AppStyle.h"
 #include "Styling/CoreStyle.h"
 #include "Widgets/Input/SButton.h"
-#include "Widgets/Input/SMultiLineEditableText.h"
+#include "Widgets/Input/SMultiLineEditableTextBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SScrollBox.h"
@@ -63,7 +63,7 @@ void SAIBPPreviewDialog::Construct(const FArguments& InArgs)
 
 					+ SScrollBox::Slot()
 					[
-						SNew(SMultiLineEditableText)
+						SNew(SMultiLineEditableTextBox)
 						.Text(FText::FromString(InArgs._T3DCode))
 						.IsReadOnly(true)
 						.AutoWrapText(false)

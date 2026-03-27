@@ -95,7 +95,7 @@ void SAIBPAssistantWidget::Construct(const FArguments& InArgs)
 					.BorderImage(FAppStyle::GetBrush("ToolPanel.DarkGroupBorder"))
 					.Padding(FMargin(4.f))
 					[
-						SAssignNew(RequirementInput, SMultiLineEditableText)
+						SAssignNew(RequirementInput, SMultiLineEditableTextBox)
 						.HintText(LOCTEXT("RequirementHint",
 							"e.g. On BeginPlay, set Health to 100 and print it to screen."))
 						.AutoWrapText(true)

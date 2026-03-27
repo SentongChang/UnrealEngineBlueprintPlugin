@@ -59,12 +59,17 @@ FAIBPImportResult FAIBPNodeFactory::ExecuteT3DImport(const FString& T3DCode)
 	Blueprint->Modify();
 
 	// --- Import nodes from T3D text ---
-	// ImportNodesFromText API changed in UE 5.4:
+	// ImportNodesFromText API changed across UE 5.x:
 	//   UE 5.0–5.3: returns TSet<UEdGraphNode*> directly (no out-param overload)
-	//   UE 5.4+:    returns void, nodes collected via TSet* out-param
+	//   UE 5.4–5.5: returns void, nodes collected via TSet* (pointer) out-param
+	//   UE 5.6+:    returns void, nodes collected via TSet& (reference) out-param
 	TSet<UEdGraphNode*> ImportedNodes;
 #if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 4
-	FEdGraphUtilities::ImportNodesFromText(Graph, T3DCode, &ImportedNodes);
+	#if ENGINE_MINOR_VERSION >= 6
+		FEdGraphUtilities::ImportNodesFromText(Graph, T3DCode, ImportedNodes);
+	#else
+		FEdGraphUtilities::ImportNodesFromText(Graph, T3DCode, &ImportedNodes);
+	#endif
 #else
 	ImportedNodes = FEdGraphUtilities::ImportNodesFromText(Graph, T3DCode);
 #endif

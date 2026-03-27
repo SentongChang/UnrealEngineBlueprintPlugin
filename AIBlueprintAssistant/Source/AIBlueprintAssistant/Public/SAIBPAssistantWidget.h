@@ -5,7 +5,7 @@
 #include "CoreMinimal.h"
 #include "Dom/JsonObject.h"
 #include "Widgets/SCompoundWidget.h"
-#include "Widgets/Input/SMultiLineEditableText.h"
+#include "Widgets/Input/SMultiLineEditableTextBox.h"
 #include "Widgets/Input/SEditableText.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Layout/SScrollBox.h"
@@ -83,7 +83,7 @@ private:
 	// --- Slate widget references ---
 
 	/** Multi-line user requirement text editor */
-	TSharedPtr<SMultiLineEditableText> RequirementInput;
+	TSharedPtr<SMultiLineEditableTextBox> RequirementInput;
 
 	/** The generate button — disabled while a request is in flight */
 	TSharedPtr<SButton> GenerateButton;

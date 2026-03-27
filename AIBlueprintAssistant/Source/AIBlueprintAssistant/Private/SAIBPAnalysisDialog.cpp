@@ -9,7 +9,7 @@
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Input/SButton.h"
-#include "Widgets/Input/SMultiLineEditableText.h"
+#include "Widgets/Input/SMultiLineEditableTextBox.h"
 #include "Widgets/Text/STextBlock.h"
 
 #define LOCTEXT_NAMESPACE "SAIBPAnalysisDialog"
@@ -49,7 +49,7 @@ void SAIBPAnalysisDialog::Construct(const FArguments& InArgs)
 					SNew(SScrollBox)
 					+ SScrollBox::Slot()
 					[
-						SNew(SMultiLineEditableText)
+						SNew(SMultiLineEditableTextBox)
 						.Text(FText::FromString(InArgs._AnalysisText))
 						.IsReadOnly(true)
 						.AutoWrapText(true)
